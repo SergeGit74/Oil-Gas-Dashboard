@@ -174,8 +174,8 @@ Requires Docker Desktop (Windows with the WSL2 backend, or macOS) or Docker Engi
 (Linux). You also need your own keys for every service listed under "Accounts, API keys and tokens".
 
 ```bash
-git clone <your-repo-url>
-cd oil_gas_dashboard
+git clone https://github.com/SergeGit74/Oil-Gas-Dashboard.git
+cd Oil-Gas-Dashboard
 
 cp .env.example .env              # then fill in your keys; leave values unquoted
 docker compose up -d --build      # first build downloads dependencies (the image is large, about 1 GB)
@@ -218,8 +218,8 @@ they would not even share data.
 ### Option B: Python
 
 ```bash
-git clone <your-repo-url>
-cd oil_gas_dashboard
+git clone https://github.com/SergeGit74/Oil-Gas-Dashboard.git
+cd Oil-Gas-Dashboard
 
 python -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
