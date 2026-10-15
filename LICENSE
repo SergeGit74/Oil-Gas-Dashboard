@@ -1,0 +1,24 @@
+Personal Use License
+
+Copyright (c) 2026 SergeGit74
+
+Permission is granted to any person to download, use and modify this software (the "Software") for personal,
+non-commercial use only, subject to the conditions below.
+
+1. No redistribution or commercial use. You may not redistribute the Software or modified versions of it, sell it,
+   offer it as a service, or use it for commercial purposes without written permission from the copyright holder.
+
+2. Your own access. The Software depends on third-party services and data sources (including Anthropic, Voyage AI,
+   EIA, Serper, Apify and its actor, and GDELT). You must have your own accounts, API keys and permitted access to
+   each of them, you must comply with each provider's terms of use, and you are solely responsible for the costs
+   your use incurs. No keys, accounts or data are provided with the Software.
+
+3. Not financial advice. The Software's output is generated automatically, may be wrong or incomplete, and is not
+   investment, trading or financial advice. You use it at your own risk.
+
+4. Notice. Keep this license notice with any copy of the Software you retain.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.

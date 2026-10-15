@@ -102,5 +102,9 @@ articles.
   files (`data.gdeltproject.org/gdeltv2`) and filters by theme plus title keyword. It yields titles only.
 - EIA spot data lags the calendar by about nine days, so the price-confirmation status compares current news
   sentiment with an older price move.
+- The dashboard has no auth and "ask the desk" spends API money, so `.streamlit/config.toml` binds it to
+  `127.0.0.1`. Keep it that way (the Docker image overrides it to `0.0.0.0` inside the container, and compose
+  publishes only to the host's `127.0.0.1`).
+- Commits should use the GitHub noreply email (set in this repo's local git config), not a personal address.
 - `.env` holds live secrets. Do not print or read it back; check which keys are set with
   `config.get(name)` truthiness only. `dashboard_store.backup.db` may exist from a manual re-tiering backup.

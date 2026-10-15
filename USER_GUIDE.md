@@ -16,7 +16,7 @@ the data stays in the database.
 
 ## 2. Starting and stopping
 
-Open a terminal in `C:\Users\User\My_Cursor_projects\oil_gas_dashboard`. Running the venv's programs directly means
+Open a terminal in the project folder (the folder you cloned or downloaded, containing `app.py`). Running the venv's programs directly means
 you do not need to activate it.
 
 **PowerShell or Command Prompt**
@@ -31,6 +31,8 @@ you do not need to activate it.
 ```
 
 - The dashboard opens at **http://localhost:8501**. If no browser opens, type that address in yourself.
+- The dashboard listens on this PC only (set in `.streamlit/config.toml`). It has no login and "ask the desk" spends
+  your API credit, so do not expose it to a network.
 - The first time, Streamlit may ask for an email address. Press **Enter** to skip it.
 - The scheduler runs one cycle at startup, so expect log lines within a minute, ending in `Scheduler started`.
 - **Stop** either program with **Ctrl+C** in its window.

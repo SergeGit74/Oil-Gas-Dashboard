@@ -14,6 +14,10 @@ Not yet exercised: Slack delivery, the cost-budget, evaluation-trend and sentime
 long unattended scheduler runs. Treat the "Known gaps" section as a checklist before relying on any output for
 trading decisions or cost reporting.
 
+**Disclaimer:** this is not financial, investment or trading advice. Briefs, tags, sentiment and price checks are
+generated automatically by language models and data feeds, can be wrong or out of date (for example, EIA price data
+lags by days), and have not been independently validated. Check anything you rely on against primary sources.
+
 ## What the system does
 
 1. **Collects** news from the Apify actor `topsail/compliant-commodity-intel` (OilPrice, World Oil, Rigzone),
@@ -257,6 +261,11 @@ python -m jobs.scheduler
 streamlit run app.py
 ```
 
+The dashboard has no login, and "ask the desk" spends your API credit, so it must not be reachable by other
+people. `.streamlit/config.toml` makes `streamlit run app.py` listen on `127.0.0.1` (this PC only); the Docker
+setup publishes the port to `127.0.0.1` too. Do not change either to `0.0.0.0` or forward the port unless you add
+authentication in front of it.
+
 | Job | Trigger | What it does |
 |---|---|---|
 | Collection cycle | Every 20 minutes | Collect, skip known articles, tag new ones, corroborate, compute sentiment and price confirmation, ingest verified articles, check source health |
@@ -309,6 +318,8 @@ oil_gas_dashboard/
 ├── healthcheck.py            # container healthchecks (dashboard, scheduler)
 ├── README.md
 ├── USER_GUIDE.md             # short guide: running the scheduler and dashboard, reading the panels
+├── LICENSE                   # personal-use license
+├── .streamlit/config.toml    # dashboard listens on 127.0.0.1 only; usage stats off
 ├── config.py                 # .env loading, required-key checks, ANTHROPIC_MODEL
 ├── pricing.py                # unit prices for cost estimates (env-overridable)
 ├── cost_tracker.py           # per-run cost accounting: Claude, Serper, Apify, counters
@@ -374,6 +385,13 @@ A "run" is one scheduler cycle. `cost_run(job_name)` collects everything recorde
 Step labels: `tagging`, `brief_generation`, `eval_claim_decomposition`, `eval_entailment`, `rag_answer`,
 `serper_corroboration`, `apify_news`.
 
+- **Observed cost (short test, will vary).** A cycle with no new articles cost about $0.0002 (the Apify run only,
+  roughly $0.015 per day at 72 cycles). A cycle that tagged about 40 new articles cost about $0.04, and a brief with
+  its evaluation about $0.07. "Ask the desk" costs about $0.006 per question. Real daily cost depends on how many
+  new articles arrive, your Apify plan and current vendor prices, so watch the dashboard's cost panel for the first
+  few days.
+- **There is no hard spending cap.** `DAILY_COST_BUDGET_USD` only sends an alert once a day has already exceeded
+  it. Set spending limits with your API providers if you need a ceiling.
 - **Prices** are defaults in `pricing.py` and will drift. Verify them against Anthropic's, Serper's and Apify's
   current pricing and override through `.env`.
 - **Dashboard:** a cost panel shows the latest day's total and per-service split, a 14-day stacked chart, and recent runs.
@@ -519,4 +537,6 @@ You may download and use this project for personal use. It is not licensed for r
 You must have your own access to every data source and service it uses (Anthropic, Voyage AI, EIA, Serper, Apify
 and its actor, and GDELT), including your own accounts and API keys, and you are responsible for complying with
 each provider's terms of use and for the costs your usage incurs. No keys, accounts or data are provided with
-this project.
+this project. The full terms are in the `LICENSE` file.
+
+The project is provided as is, without a support commitment; issues and questions may not be answered.

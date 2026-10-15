@@ -1,0 +1,8 @@
+# The dashboard has no login, and "ask the desk" spends the owner's API credit, so listen on this PC only.
+# Environment variables override this file: the Docker image sets STREAMLIT_SERVER_ADDRESS=0.0.0.0 inside the
+# container, and docker-compose.yml publishes the port to 127.0.0.1 on the host.
+[server]
+address = "127.0.0.1"
+
+[browser]
+gatherUsageStats = false
