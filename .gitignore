@@ -1,0 +1,8 @@
+.env
+venv/
+__pycache__/
+*.pyc
+oil_gas_archive/
+dashboard_store.db
+dashboard_store.backup.db
+eval_history.jsonl

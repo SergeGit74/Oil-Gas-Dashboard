@@ -1,0 +1,57 @@
+# Oil & Gas Morning Intelligence Dashboard.
+#   cp .env.example .env      (fill in your own keys; leave values unquoted)
+#   docker compose up -d --build
+#   open http://localhost:8501
+#
+# Two long-running services share one named volume (database, vector store, evaluation log):
+#   scheduler  collects news every few minutes and writes the daily brief
+#   dashboard  reads the shared store
+# Use a named volume, not a bind mount to a Windows folder: SQLite's WAL mode is unreliable on bind mounts.
+
+x-app: &app
+  build: .
+  image: oil-gas-dashboard:local
+  env_file: .env
+  init: true
+  restart: unless-stopped
+  volumes:
+    - oilgas_data:/data
+
+services:
+  # One-shot: creates/migrates the tables before the other services start, avoiding a first-start race.
+  init:
+    <<: *app
+    command: ["python", "-c", "import storage"]
+    restart: "no"
+
+  scheduler:
+    <<: *app
+    command: ["python", "-m", "jobs.scheduler"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py", "scheduler"]
+      interval: 5m
+      timeout: 20s
+      retries: 2
+      start_period: 10m
+
+  dashboard:
+    <<: *app
+    command: ["streamlit", "run", "app.py"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    ports:
+      # Bound to this PC only: the dashboard has no login. Change to "8501:8501" only on a trusted network.
+      - "127.0.0.1:8501:8501"
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py", "dashboard"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  oilgas_data:

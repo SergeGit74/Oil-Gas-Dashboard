@@ -1,0 +1,9 @@
+streamlit>=1.38
+anthropic>=0.40
+voyageai>=0.3
+chromadb>=0.5
+python-dotenv>=1.0
+requests>=2.32
+pandas>=2.2
+beautifulsoup4>=4.12
+apscheduler>=3.10

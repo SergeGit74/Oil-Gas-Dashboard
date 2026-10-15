@@ -1,0 +1,23 @@
+# Secrets and local data must never be baked into an image.
+.env
+*.db
+*.db-wal
+*.db-shm
+dashboard_store.backup.db
+oil_gas_archive/
+eval_history.jsonl
+
+# Local environment and caches
+venv/
+__pycache__/
+*.pyc
+
+# Not needed at runtime
+.git/
+.claude/
+CLAUDE.md
+USER_GUIDE.md
+README.md
+Dockerfile
+docker-compose.yml
+.dockerignore
