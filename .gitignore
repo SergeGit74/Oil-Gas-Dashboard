@@ -201,3 +201,4 @@ dashboard_store.backup.db
 eval_history.jsonl
 reports/
 .pytest_cache/
+outbox/

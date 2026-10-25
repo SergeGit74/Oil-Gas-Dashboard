@@ -27,3 +27,4 @@ tests/
 pytest.ini
 requirements-dev.txt
 CLAUDE_CODE_TASKS.md
+outbox/

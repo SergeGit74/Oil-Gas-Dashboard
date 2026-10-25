@@ -9,6 +9,8 @@ SOURCE_HEALTH_CONFIG = {
     "fetch_eia_data": {"label": "EIA price and inventory data", "threshold": 2},
     "fetch_prices": {"label": "Market prices", "threshold": 3},
     "fetch_eia_weekly": {"label": "EIA weekly stocks and gas storage", "threshold": 2},
+    "slack_alerts": {"label": "Slack high-impact alerts", "threshold": 3},
+    "send_brief_email": {"label": "Brief email", "threshold": 2},
     "load_events": {"label": "Event calendar (EIA schedules)", "threshold": 3},
 }
 BAD_STATUSES = {"degraded", "failed"}

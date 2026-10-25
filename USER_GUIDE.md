@@ -52,6 +52,12 @@ you do not need to activate it.
   correct direction); `python scripts/tagger_agreement.py` and `python scripts/export_golden_set.py` summarise it.
   The **Research** page (sidebar) compares past sentiment with Brent's next moves; it needs about 30 days of both
   and is descriptive only. From the second day on, the brief has a "What changed since yesterday" section.
+- **Slack alerts.** With `SLACK_WEBHOOK_URL` set, each verified story with impact 4 or 5 is posted once (at most 5 an
+  hour). Nothing unverified is ever posted. With no webhook, nothing is sent.
+- **Brief email.** To receive the brief by email, set `EMAIL_ENABLED=true`, `SMTP_HOST`, `SMTP_USER`,
+  `SMTP_PASSWORD`, `EMAIL_FROM` and `EMAIL_TO` in `.env` and restart the scheduler. A brief that failed its checks is
+  never mailed to the list: only you get a short "needs review" note. Preview a message without sending anything:
+  `python -m jobs.send_brief_email --dry-run` (the `.eml` file appears in the `outbox` folder).
 - **Stop** either program with **Ctrl+C** in its window.
 - After any code change, stop and restart the program; running programs keep the old code.
 - Start only one scheduler and one dashboard. Two schedulers double the cost; a second dashboard moves to port 8502.

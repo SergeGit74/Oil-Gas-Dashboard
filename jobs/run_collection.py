@@ -5,6 +5,7 @@ import logging
 import config
 import cost_tracker
 import data_sources
+import high_impact_alerts
 import llm_pipeline
 import price_confirmation
 import sentiment_analysis
@@ -105,6 +106,12 @@ def run_collection():
                      "flagged_injection": 0})
     storage.save_articles(rows)  # untagged articles are not saved, so they are retried next cycle
     cost_tracker.incr("articles_clustered", story_cluster.cluster_new_articles())  # free: local TF-IDF
+    try:  # a Slack or alert-logic problem must not stop sentiment and the price check below
+        for outcome, n in high_impact_alerts.run_alerts(now).items():
+            cost_tracker.incr(f"alerts_{outcome}", n)
+    except Exception as exc:
+        log.exception("high-impact alerts failed")
+        storage.log_job("slack_alerts", "failed", str(exc))
 
     # Sentiment and price check run every cycle from stored articles, not from this cycle's new ones.
     eia = data_sources.fetch_eia_data()

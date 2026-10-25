@@ -64,7 +64,9 @@ def run_evaluation():
         context += f"\nArchive headlines:\n{history}"
     evaluation = brief_evaluation.evaluate_brief(brief, articles, context)
     status = "published" if evaluation["passed"] else "flagged_for_review"
-    storage.save_brief(today, status, evaluation["groundedness"], brief, evaluation, key_points=kp)
+    sources = [{"n": i, "title": a["title"], "source": a["source"], "url": a.get("url")}
+               for i, a in enumerate(articles, start=1)]  # same numbering the brief's [n] citations use
+    storage.save_brief(today, status, evaluation["groundedness"], brief, evaluation, key_points=kp, sources=sources)
     storage.log_job("run_evaluation", "success" if evaluation["passed"] else "alert", "; ".join(evaluation["reasons"]))
     return status
 

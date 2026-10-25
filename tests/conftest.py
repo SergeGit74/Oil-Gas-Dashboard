@@ -12,7 +12,8 @@ import pytest
 
 _TMP = Path(tempfile.mkdtemp(prefix="oilgas_tests_"))
 for _name in ("ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "EIA_API_KEY", "SERPER_API_KEY", "APIFY_TOKEN",
-              "TWELVE_DATA_API_KEY", "SLACK_WEBHOOK_URL"):
+              "TWELVE_DATA_API_KEY", "SLACK_WEBHOOK_URL", "SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD",
+              "EMAIL_FROM", "EMAIL_TO", "EMAIL_OWNER", "EMAIL_ENABLED"):
     os.environ[_name] = ""  # set (not removed) so load_dotenv cannot fill them from the real .env
 os.environ["ENABLE_YAHOO_FALLBACK"] = "false"
 

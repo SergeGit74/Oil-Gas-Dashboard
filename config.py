@@ -66,6 +66,13 @@ CLUSTER_SIMILARITY_THRESHOLD = float(os.getenv("CLUSTER_SIMILARITY_THRESHOLD") o
 CORROBORATION_MIN_SIMILARITY = float(os.getenv("CORROBORATION_MIN_SIMILARITY") or 0.40)     # tuned with 8 Serper calls on 2026-10-25: title-to-title cosine
 BACKTEST_MIN_OBSERVATIONS = int(os.getenv("BACKTEST_MIN_OBSERVATIONS") or 30)
 
+# ---- delivery (Phase 4) ----
+ALERT_MIN_MAGNITUDE = int(os.getenv("ALERT_MIN_MAGNITUDE") or 4)   # verified articles at or above this get a Slack alert
+ALERT_MAX_PER_HOUR = int(os.getenv("ALERT_MAX_PER_HOUR") or 5)
+EMAIL_OUTBOX_DIR = Path(os.getenv("EMAIL_OUTBOX_DIR") or DATA_DIR / "outbox")  # dry-run .eml files
+EMAIL_MAX_ATTEMPTS = 3          # per day and kind, shared via storage.claim_daily_run
+EMAIL_RETRY_COOLDOWN_MIN = 30
+
 QUOTA_SAFETY_FRACTION = 0.9  # refuse calls beyond this share of a provider's daily limit
 # provider -> (credits per minute, credits per day). Defaults are conservative guesses except Twelve Data's, which
 # is its published Basic plan (8/min, 800/day); override in .env if your plan differs.
@@ -78,6 +85,11 @@ PROVIDER_LIMITS = {
 
 def get(name, default=""):
     return os.getenv(name, default)
+
+
+def email_enabled():
+    """EMAIL_ENABLED is off unless set to true. Read at call time so tests and .env edits behave the same."""
+    return (os.getenv("EMAIL_ENABLED") or "false").strip().lower() in ("1", "true", "yes")
 
 
 def require_keys(*names):

@@ -61,8 +61,10 @@ jobs/scheduler.py (long-running process, APScheduler)
 |                    -> selective Serper corroboration of new articles (costed) -> save
 |                    -> sentiment from stored last-24h verified articles -> EIA price check
 |                    -> weekly EIA stocks / gas storage into eia_weekly (at most every 6 h)
+|                    -> Slack alert per high-impact verified story (high_impact_alerts)
 |                    -> save sentiment snapshot
 |    run_ingestion:  embed verified articles into the Chroma vector store (RAG)
+|    send_brief_email: once per day, if enabled and today's brief is unsent (published -> list, flagged -> owner)
 |    catch_up_brief: past 06:00 desk time with no brief for today -> claim, then run_evaluation
 |    source_health:  consecutive-degradation alerts for Apify, Serper, EIA
 |
@@ -78,7 +80,7 @@ jobs/scheduler.py (long-running process, APScheduler)
 |
 v
 storage.py (SQLite shared store: articles, briefs, sentiment_history, job_runs, run_costs, run_claims,
-|           price_ticks, price_daily, api_quota, eia_weekly, events)
+|           price_ticks, price_daily, api_quota, eia_weekly, events, feedback, alert_log, email_log)
 |
 v
 app.py (Streamlit, separate process, read-only against the store)
@@ -144,6 +146,11 @@ whole organization is rejected with a 400 asking for an `anthropic-workspace-id`
 | `CLUSTER_SIMILARITY_THRESHOLD` | `0.45` | Headline similarity (TF-IDF cosine) at which an article joins an existing story. Tuned on 2,371 real titles |
 | `CORROBORATION_MIN_SIMILARITY` | `0.40` | Title similarity a Serper result needs to count as corroboration. Tuned with 8 real Serper calls |
 | `BACKTEST_MIN_OBSERVATIONS` | `30` | Paired observations needed before the backtest shows statistics |
+| `ALERT_MIN_MAGNITUDE`, `ALERT_MAX_PER_HOUR` | `4`, `5` | Slack alert threshold (impact 1-5) and hourly cap |
+| `EMAIL_ENABLED` | `false` | Master switch for the brief email |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | unset, `587` | SMTP server. Port 465 uses SSL; any other port must offer STARTTLS |
+| `EMAIL_FROM`, `EMAIL_TO`, `EMAIL_OWNER` | unset | Sender; comma-separated recipients of the brief; owner of the "needs review" notice (default: first `EMAIL_TO`) |
+| `EMAIL_OUTBOX_DIR` | `outbox/` in the data folder | Where `--dry-run` writes `.eml` files |
 | `DAILY_COST_BUDGET_USD` | `10` | Daily total above which a budget alert fires |
 | `SONNET_INPUT_USD_PER_MTOK`, `SONNET_OUTPUT_USD_PER_MTOK` | `2.00`, `10.00` | Price overrides for the default model |
 | `ANTHROPIC_PRICE_MULTIPLIER` | `1.0` | For example 1.1 if you use US-only inference pricing |
@@ -363,6 +370,8 @@ oil_gas_dashboard/
 ├── llm_pipeline.py           # source trust registry, news/commentary split, injection flags, tagging, brief generation
 ├── sentiment_analysis.py     # weighted Bull/Bear/Neutral aggregation, current_sentiment, divergence check
 ├── price_confirmation.py     # sentiment vs Brent price move: Confirmed/Partial/Divergent
+├── high_impact_alerts.py     # Slack alert for each verified high-impact story (dedupe, hourly cap, escaping)
+├── brief_email.py            # builds the brief email / review notice, sends over TLS, writes .eml previews
 ├── story_cluster.py          # local TF-IDF headline similarity and story clustering (no API cost)
 ├── key_points.py             # per-brief key points and the deterministic day-over-day diff
 ├── backtest.py               # descriptive sentiment-vs-Brent-return backtest (no look-ahead)
@@ -387,6 +396,7 @@ oil_gas_dashboard/
 │   ├── run_collection.py     # fetch, normalize, skip known, tag new, corroborate, sentiment, price check
 │   ├── run_ingestion.py      # embed verified articles into the vector store
 │   ├── run_prices.py         # price poll (fetch_prices) and the tick retention job
+│   ├── send_brief_email.py   # email today's brief once (also `--dry-run`)
 │   ├── load_events.py        # load_events: fill the events table
 │   ├── run_evaluation.py     # generate and evaluate the morning brief
 │   ├── check_eval_trend.py   # groundedness drift monitoring
@@ -402,7 +412,7 @@ oil_gas_dashboard/
 | Table | Contents |
 |---|---|
 | `articles` | Tagged articles: category, direction, magnitude, confidence, reason, content type. `collected_at` is the time the article was first seen. `cluster_id` groups near-duplicate headlines (the id of the story's first article); `corroboration_json` lists the trusted-source results that matched |
-| `briefs` | One brief per day with status (`published` or `flagged_for_review`), groundedness score, evaluation JSON, and `key_points_json` (top stories, sentiment, prices) used for the next day's comparison |
+| `briefs` | One brief per day with status (`published` or `flagged_for_review`), groundedness score, evaluation JSON, `key_points_json` (top stories, sentiment, prices) used for the next day's comparison, and `sources_json` (the numbered source list the brief cites) |
 | `sentiment_history` | One row per day: label, score, counts, price benchmark, price change, confirmation status |
 | `job_runs` | Status log for every job and source (`success`, `degraded`, `skipped`, `failed`, `alert`, `ok`) |
 | `run_claims` | `(job, day)` -> attempts and last attempt; lets a daily job run at most N times a day, spaced by a cooldown |
@@ -410,6 +420,8 @@ oil_gas_dashboard/
 | `price_daily` | Daily open/high/low/close per indicator, rolled up from ticks before they are purged |
 | `eia_weekly` | Weekly EIA series (crude stocks, distillate stocks, Lower 48 gas storage): series, period, value, unit |
 | `events` | Scheduled events: date, time, tz, title, category, source_url, source. Unique on (date, time, title) |
+| `alert_log` | One row per story ever considered for a Slack alert (cluster key unique): article, status `sent`, `failed`, `suppressed_rate_limit` or `not_configured` |
+| `email_log` | `(day, kind)` -> sent time and recipient count; the "already mailed" marker (`brief` or `review_notice`) |
 | `feedback` | Analyst feedback: item_type (`article_tag` or `brief_section`), item_id, rating (`up`/`down`), comment, analyst_label (corrected direction), created_at |
 | `api_quota` | Credits used per provider per UTC day |
 | `run_costs` | One row per scheduled run: Claude, Apify and Serper cost, token and credit totals, and `details_json` with the per-step breakdown, counters and warnings |
@@ -648,6 +660,37 @@ refresh every 60 seconds; the dashboard never calls a price provider.
   often the model's direction matches the analysts (the latest feedback per article wins; a thumbs-down without a
   correction is counted separately).
 
+## Delivery: alerts and email
+
+- **High-impact alerts.** After each collection cycle, `high_impact_alerts.run_alerts` looks at the articles saved in
+  that cycle and posts one Slack message per **story** (cluster) that is verified (confidence 0.5 or more, so High
+  0.8+ or Medium 0.5-0.8; not injection-flagged) and has impact at or above `ALERT_MIN_MAGNITUDE` (4). The message
+  uses the best verified article of the story (title, outlet, direction, impact, confidence level, "reported by N
+  outlets" counting verified articles only, link). Titles are scraped text, so Slack markup in them is escaped
+  (`<!channel>`, `<@U..>` and links are defused) and length-capped. A story is alerted **at most once ever**
+  (`alert_log`, unique per cluster, claimed before sending). `ALERT_MAX_PER_HOUR` (5) caps bursts; the least
+  important are recorded as `suppressed_rate_limit` and are **not replayed** later, because they are no longer new.
+  A failed post is recorded as `failed` and not retried. With no `SLACK_WEBHOOK_URL`, nothing is sent and the story
+  is recorded as `not_configured`. Real attempts log `slack_alerts` to `job_runs` (registered in
+  `SOURCE_HEALTH_CONFIG`).
+- **Brief email.** Off unless `EMAIL_ENABLED=true`. After every collection cycle and the daily brief, the scheduler
+  calls `jobs/send_brief_email.py`, which does nothing unless today's brief exists and has not been mailed.
+  A **published** brief goes to everyone in `EMAIL_TO`; a brief **held for review** sends only a short "needs review"
+  notice (groundedness and the evaluator's reasons, not the brief text) to the owner. The message is plain text
+  plus HTML with the status, generation time, the brief (including its "What changed since yesterday" section), a
+  price snapshot (the latest quotes when the brief was generated) and the numbered sources. It never contains cost
+  figures or unverified / low-confidence articles. Briefs generated before `sources_json` existed say "Sources were
+  not stored".
+- **Sending safely.** TLS is required: port 465 uses implicit TLS, any other port must offer STARTTLS or the job
+  refuses to log in or send. Timeout 30 s; the password is never logged or put in `job_runs`. Header values have
+  control characters replaced, and recipient addresses are validated, so a scraped or odd value cannot add headers or
+  recipients. HTML is escaped before a small markdown subset is applied.
+- **Once per day.** `claim_daily_run("brief_email", day)` allows at most 3 attempts a day, 30 minutes apart, and stops
+  two runs sending at once; `email_log` records a successful send, because the claim alone would allow a second send.
+  A failure logs `send_brief_email` as `failed` (registered in `SOURCE_HEALTH_CONFIG`).
+- **Preview.** `python -m jobs.send_brief_email --dry-run [--day YYYY-MM-DD]` writes an `.eml` into `outbox/`
+  (gitignored). It needs no SMTP settings, works while email is disabled, and neither claims nor marks anything sent.
+
 ## Tests
 
 ```bash
@@ -663,7 +706,9 @@ gating, the EIA schedule parsers, event loading (idempotent; a bad page keeps ol
 only table events, the freshness levels, and dashboard rendering with no keys; story clustering (duplicates merge,
 distinct stories and day-apart repeats do not), one-per-story sentiment, subdomain trust matching, corroboration
 by content, backtest alignment without look-ahead, the day-over-day diff (including a missing yesterday), and
-feedback validation, export, agreement and the dashboard form.
+feedback validation, export, agreement and the dashboard form; Slack alert qualification, dedupe by story, the
+hourly cap, escaping and failure handling; and the email job (published sends once, flagged sends the owner
+notice, disabled sends nothing, STARTTLS before login, retry cooldown, header injection, dry run, no cost text).
 
 ## Known gaps (verify before relying on the output)
 
@@ -692,6 +737,10 @@ feedback validation, export, agreement and the dashboard form.
   price poller, so about 30 paired days are needed. Key points use the latest quote at brief time, which on a
   weekend is Friday's close (the diff says 'unchanged' when the quote time is the same). Cluster ids exist only
   for articles collected in the last 48 hours when the feature first ran.
+- **Delivery not exercised live.** No real Slack message or email has been sent: the alert and email paths are
+  tested with mocked HTTP and a fake SMTP server only. SMTP provider sign-in rules (for example app passwords or
+  OAuth-only accounts at Gmail or Microsoft) are unverified and depend on your provider. Slack alerts cover only
+  articles saved in the cycle, so after a long outage the hourly cap decides which stories are announced.
 - **Price check uses lagging data.** EIA spot prices arrived about nine days behind the calendar in testing, so
   the Confirmed/Partial/Divergent status compares today's news sentiment with the move between the last two EIA
   observations, which may be from a different week. Treat it as indicative until a fresher price source is added.

@@ -16,6 +16,7 @@ from jobs.load_events import run_load_events
 from jobs.run_evaluation import run_evaluation
 from jobs.run_ingestion import run_ingestion
 from jobs.run_prices import purge_old_ticks, run_prices
+from jobs.send_brief_email import send_brief_email
 from jobs.source_health import check_source_health
 
 log = logging.getLogger("scheduler")
@@ -72,6 +73,7 @@ def collection_cycle():
         _step("run_collection", run_collection)
         _step("run_ingestion", run_ingestion)
         _step("catch_up_brief", catch_up_brief)
+        _step("send_brief_email", send_brief_email)  # no-op unless enabled and today's brief is unsent
         _step("source_health", check_source_health)
 
 
@@ -80,6 +82,7 @@ def daily_brief_cycle():
         if _claim_brief_run():
             _step("run_evaluation", run_evaluation)
             _step("check_eval_trend", check_eval_trend)
+            _step("send_brief_email", send_brief_email)
         else:
             log.info("Scheduled brief not claimed (attempt cap or cooldown).")
         _step("source_health", check_source_health)

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An oil and gas morning-intelligence system: a scheduler collects and tags news, a SQLite store holds the results,
 and a Streamlit dashboard reads them. `README.md` has the full design and known gaps; `USER_GUIDE.md` is the
 operator guide. The project runs on Windows with a project-local `venv/`; it has a git repo and a pytest suite
-(`tests/`), and no linter configured. `CLAUDE_CODE_TASKS.md` is the phased task brief (Phases 0-3 are done).
+(`tests/`), and no linter configured. `CLAUDE_CODE_TASKS.md` is the phased task brief (Phases 0-4 are done).
 
 ## Commands
 
@@ -102,6 +102,22 @@ to `config.py`: the module wins on import, and a test guards that.
   dashboard header from `job_runs`, `price_ticks` and `briefs`.
 - Anything added to the brief prompt must also go into the `context` passed to `evaluate_brief`, or its numbers fail
   the numeric-fidelity check.
+
+### Delivery (`high_impact_alerts.py`, `brief_email.py`, `jobs/send_brief_email.py`)
+
+- Slack alerts run at the end of `run_collection` on that cycle's saved articles. Only verified (confidence >= 0.5,
+  not injection-flagged), direction-tagged articles with magnitude >= `ALERT_MIN_MAGNITUDE` qualify; one message per
+  cluster ever (`alert_log`, claimed with INSERT OR IGNORE *before* sending); `ALERT_MAX_PER_HOUR` caps bursts and
+  suppressed ones are not replayed. Scraped titles go through `slack_escape`. Use `alerts.send_slack` (plain post)
+  for news alerts and `alerts.send_alert` for system warnings.
+- The brief email is sent by `send_brief_email()` from the scheduler (after each collection cycle and the daily
+  brief). Published -> `EMAIL_TO`; flagged -> a short notice to the owner only, never the brief text. Exclusivity and
+  retry cap come from `claim_daily_run("brief_email", day)` (3 attempts, 30 min cooldown); the "sent" marker is
+  `email_log`, because a claim alone would allow a second send after a success. TLS is mandatory (STARTTLS or port
+  465); keep `clean_header`/`parse_addresses` on every header value; never log the password or put cost figures or
+  low-confidence articles in a message. `briefs.sources_json` holds the numbered sources the email lists.
+- `python -m jobs.send_brief_email --dry-run` writes an `.eml` to `outbox/` and changes no state. No live Slack
+  message or email has been sent from this repo: tests use mocked HTTP and a fake SMTP class.
 
 ### Trust model (spans `llm_pipeline.py`, `storage.py`, `config.py`)
 

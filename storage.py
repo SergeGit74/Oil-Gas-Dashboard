@@ -28,6 +28,26 @@ CREATE TABLE IF NOT EXISTS articles (
 );
 CREATE INDEX IF NOT EXISTS idx_articles_collected ON articles(collected_at);
 
+CREATE TABLE IF NOT EXISTS alert_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_key TEXT NOT NULL UNIQUE,
+    article_id INTEGER,
+    title TEXT,
+    source TEXT,
+    magnitude INTEGER,
+    direction TEXT,
+    status TEXT NOT NULL,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS email_log (
+    day TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    recipients INTEGER,
+    sent_at TEXT,
+    PRIMARY KEY (day, kind)
+);
+
 CREATE TABLE IF NOT EXISTS feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     item_type TEXT NOT NULL,
@@ -158,7 +178,7 @@ MIGRATIONS = {
         "content_type": "TEXT", "source_tier": "TEXT",
         "cluster_id": "INTEGER", "corroboration_json": "TEXT",
     },
-    "briefs": {"key_points_json": "TEXT"},
+    "briefs": {"key_points_json": "TEXT", "sources_json": "TEXT"},
     "sentiment_history": {"price_value": "REAL"},
 }
 
@@ -279,13 +299,15 @@ def mark_indexed(ids):
 
 # ---- briefs ---------------------------------------------------------------
 
-def save_brief(date, status, groundedness, text, evaluation, key_points=None):
+def save_brief(date, status, groundedness, text, evaluation, key_points=None, sources=None):
+    """sources: the numbered source list the brief cites, [{"n", "title", "source", "url"}, ...]."""
     with connect() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO briefs (date, created_at, status, groundedness, text, eval_json, key_points_json) "
-            "VALUES (?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO briefs (date, created_at, status, groundedness, text, eval_json, key_points_json, "
+            "sources_json) VALUES (?,?,?,?,?,?,?,?)",
             (date, utcnow(), status, groundedness, text, json.dumps(evaluation),
-             json.dumps(key_points) if key_points is not None else None))
+             json.dumps(key_points) if key_points is not None else None,
+             json.dumps(sources) if sources is not None else None))
 
 
 def brief_for_date(date):
@@ -450,6 +472,50 @@ def reserve_quota(provider, day_utc, credits, cap):
 def quota_used(provider, day_utc):
     rows = _rows("SELECT calls FROM api_quota WHERE provider = ? AND day_utc = ?", (provider, day_utc))
     return rows[0]["calls"] if rows else 0
+
+
+# ---- alerts and email delivery -------------------------------------------
+
+def articles_collected_at(collected_at):
+    """Articles saved with exactly this collected_at (one collection cycle shares a single timestamp)."""
+    return _rows("SELECT * FROM articles WHERE collected_at = ?", (collected_at,))
+
+
+def record_alert(cluster_key, article, status, now=None):
+    """Insert the alert row for a story. False means this story already has one, so nobody may alert it again."""
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO alert_log (cluster_key, article_id, title, source, magnitude, direction, status, "
+            "created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (cluster_key, article["id"], article["title"], article["source"], article["magnitude"],
+             article["direction"], status, now or utcnow()))
+        return cur.rowcount == 1
+
+
+def set_alert_status(cluster_key, status):
+    with connect() as conn:
+        conn.execute("UPDATE alert_log SET status = ? WHERE cluster_key = ?", (status, cluster_key))
+
+
+def alerts_in_last_hour(now=None):
+    """Alerts sent (or being sent) in the last hour, for the hourly cap."""
+    since = ((now or datetime.now(timezone.utc)) - timedelta(hours=1)).isoformat(timespec="seconds")
+    rows = _rows("SELECT COUNT(*) AS n FROM alert_log WHERE status IN ('sent', 'pending') AND created_at >= ?", (since,))
+    return rows[0]["n"]
+
+
+def recent_alerts(limit=20):
+    return _rows("SELECT * FROM alert_log ORDER BY id DESC LIMIT ?", (limit,))
+
+
+def email_sent(day, kind):
+    return bool(_rows("SELECT 1 FROM email_log WHERE day = ? AND kind = ?", (day, kind)))
+
+
+def record_email_sent(day, kind, recipients):
+    with connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO email_log (day, kind, recipients, sent_at) VALUES (?,?,?,?)",
+                     (day, kind, recipients, utcnow()))
 
 
 # ---- analyst feedback -----------------------------------------------------
