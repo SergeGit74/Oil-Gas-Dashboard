@@ -22,10 +22,12 @@ NOW = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
 
 
 def iso(dt):
+    """A datetime as an ISO string to the second."""
     return dt.isoformat(timespec="seconds")
 
 
 def article(url, title, source="example.com", hours_ago=1.0, **extra):
+    """A complete article row, collected `hours_ago` before the test's 'now'."""
     base = {"url": url, "title": title, "source": source, "snippet": "", "collected_at": iso(NOW - timedelta(hours=hours_ago)),
             "direction": "Bullish", "magnitude": 3, "confidence": 0.8, "content_type": "news",
             "flagged_injection": 0, "category": "Supply"}
@@ -33,6 +35,7 @@ def article(url, title, source="example.com", hours_ago=1.0, **extra):
 
 
 def clusters():
+    """{url: cluster_id} for every stored article."""
     return {r["url"]: r["cluster_id"] for r in storage._rows("SELECT url, cluster_id FROM articles")}
 
 
@@ -44,6 +47,7 @@ UKRAINE = ["Ukraine resumes attacks on Russian oil refineries, officials say",
 
 
 def test_duplicates_merge_and_distinct_stories_do_not(db):
+    """Near-duplicate headlines share a cluster; unrelated ones get their own."""
     rows = [article(f"u{i}", t, f"outlet{i}.com") for i, t in enumerate(UKRAINE)]
     rows += [article("s1", "Saudi Arabia intercepts missile near Red Sea oil hub"),
              article("o1", "OPEC+ weighs December output increase, delegates say")]
@@ -55,6 +59,7 @@ def test_duplicates_merge_and_distinct_stories_do_not(db):
 
 
 def test_cluster_id_is_the_earliest_member_and_is_stable(db):
+    """A cluster's id is its first article's id, later articles join it, and re-running assigns nothing."""
     storage.save_articles([article("u0", UKRAINE[0])])
     story_cluster.cluster_new_articles(now=NOW)
     first = clusters()["u0"]
@@ -65,6 +70,7 @@ def test_cluster_id_is_the_earliest_member_and_is_stable(db):
 
 
 def test_same_headline_a_day_apart_is_a_new_story(db):
+    """The same headline more than 24 hours later starts a new cluster."""
     storage.save_articles([article("old", UKRAINE[0], hours_ago=30), article("new", UKRAINE[0], hours_ago=1)])
     story_cluster.cluster_new_articles(now=NOW)
     c = clusters()
@@ -72,12 +78,14 @@ def test_same_headline_a_day_apart_is_a_new_story(db):
 
 
 def test_similarity_measure():
+    """Similar headlines score high and unrelated ones low; no candidates gives an empty list."""
     sims = story_cluster.text_similarity(UKRAINE[0], [UKRAINE[1], "Saudi Arabia intercepts missile near Red Sea"])
     assert sims[0] > 0.6 > 0.1 > sims[1]
     assert story_cluster.text_similarity("anything", []) == []
 
 
 def test_sentiment_counts_one_article_per_story(db):
+    """Sentiment counts one article per cluster, the highest-confidence one."""
     storage.save_articles([
         article("a", UKRAINE[0], "reuters.com", confidence=0.8, magnitude=4),
         article("b", UKRAINE[1], "bloomberg.com", confidence=0.95, magnitude=4),
@@ -93,6 +101,7 @@ def test_sentiment_counts_one_article_per_story(db):
 
 
 def test_one_per_cluster_keeps_unclustered_rows_separate():
+    """Articles without a cluster are never merged with each other."""
     rows = [{"id": 1, "confidence": 0.9, "magnitude": 3}, {"id": 2, "confidence": 0.7, "magnitude": 3}]
     assert len(story_cluster.one_per_cluster(rows)) == 2
 
@@ -100,6 +109,7 @@ def test_one_per_cluster_keeps_unclustered_rows_separate():
 # ---- trust matching by domain suffix --------------------------------------
 
 def test_subdomains_match_the_registry_on_whole_labels():
+    """uk.reuters.com matches reuters.com but notreuters.com does not."""
     assert llm_pipeline.source_tier("uk.reuters.com") == "wire_trade"
     assert llm_pipeline.source_tier("www.reuters.com") == "wire_trade"
     assert llm_pipeline.source_tier("markets.ft.com") == "wire_trade"
@@ -115,6 +125,7 @@ def test_subdomains_match_the_registry_on_whole_labels():
 # ---- corroboration by matching content ------------------------------------
 
 def serper(title, link, snippet=""):
+    """A fake Serper news result."""
     return {"title": title, "link": link, "snippet": snippet}
 
 
@@ -122,6 +133,7 @@ ART = {"title": UKRAINE[0], "source": "kcra.com"}
 
 
 def test_only_trusted_matching_results_count():
+    """Only trusted, similar-titled results from other outlets corroborate."""
     news = [serper(UKRAINE[1], "https://uk.reuters.com/world/x"),                                  # match, subdomain
             serper("EXCLUSIVE: Trump on rising gas prices during Iran operation", "https://www.bloomberg.com/y"),  # trusted, unrelated
             serper(UKRAINE[2], "https://some-local-paper.com/z"),                                  # matches, not trusted
@@ -132,6 +144,7 @@ def test_only_trusted_matching_results_count():
 
 
 def test_own_outlet_and_repeats_do_not_count():
+    """The article's own outlet is excluded and repeats from one outlet count once."""
     art = {"title": UKRAINE[0], "source": "reuters.com"}
     news = [serper(UKRAINE[1], "https://uk.reuters.com/a"), serper(UKRAINE[1], "https://www.apnews.com/b"),
             serper(UKRAINE[2], "https://apnews.com/c")]
@@ -140,6 +153,7 @@ def test_own_outlet_and_repeats_do_not_count():
 
 
 def test_corroborate_returns_matches_and_they_are_stored(db, monkeypatch):
+    """corroborate returns the matches, and they are saved in corroboration_json."""
     monkeypatch.setattr(data_sources, "serper_news", lambda q, num=10: [serper(UKRAINE[1], "https://reuters.com/a")])
     tagged = {0: {**ART, "tier": "unknown", "tag": {"magnitude": 4}}}
     result = run_collection.corroborate(tagged)
@@ -153,10 +167,12 @@ def test_corroborate_returns_matches_and_they_are_stored(db, monkeypatch):
 # ---- backtest -------------------------------------------------------------
 
 def closes(*pairs, provider="yahoo"):
+    """Daily close rows for the backtest tests."""
     return [{"day": d, "close": c, "provider": provider} for d, c in pairs]
 
 
 def test_backtest_uses_the_sentiment_day_close_and_only_later_prices():
+    """Returns start at the sentiment day's close and use only later prices."""
     sent = [{"date": "2026-10-20", "label": "Bull", "score": 0.3}]
     daily = closes(("2026-10-19", 50.0), ("2026-10-20", 100.0), ("2026-10-21", 110.0),
                    ("2026-10-22", 121.0), ("2026-10-23", 133.1))
@@ -166,6 +182,7 @@ def test_backtest_uses_the_sentiment_day_close_and_only_later_prices():
 
 
 def test_backtest_skips_weekends_without_inventing_days():
+    """Weekend gaps use the next available closes."""
     sent = [{"date": "2026-10-23", "label": "Bear", "score": -0.3}]        # a Friday
     daily = closes(("2026-10-23", 100.0), ("2026-10-26", 98.0), ("2026-10-27", 97.0), ("2026-10-28", 96.0))
     obs = backtest.build_observations(sent, daily, today=date(2026, 11, 1))
@@ -173,6 +190,7 @@ def test_backtest_skips_weekends_without_inventing_days():
 
 
 def test_backtest_drops_incomplete_far_or_mixed_provider_outcomes_and_today():
+    """Outcomes that are too far away, from another provider, or not final yet are dropped."""
     sent = [{"date": "2026-10-01", "label": "Bull", "score": 0.3}, {"date": "2026-10-21", "label": "Bull", "score": 0.3},
             {"date": "2026-10-30", "label": "Bull", "score": 0.3}]
     daily = closes(("2026-10-01", 100.0)) +         [{"day": "2026-10-21", "close": 100.0, "provider": "yahoo"}, {"day": "2026-10-22", "close": 90.0, "provider": "eia"}]
@@ -183,6 +201,7 @@ def test_backtest_drops_incomplete_far_or_mixed_provider_outcomes_and_today():
 
 
 def test_backtest_insufficient_below_thirty_then_stats():
+    """Under 30 observations gives 'insufficient'; at 30 the correlation and hit rates appear."""
     obs = [{"date": f"d{i}", "label": "Bull" if i % 2 else "Bear", "score": 0.4 if i % 2 else -0.4,
             "next_day": 1.0 if i % 2 else -1.0, "three_day": None} for i in range(29)]
     assert backtest.summarize(obs, "next_day") == {"insufficient": True, "n": 29, "needed": 30}
@@ -195,6 +214,7 @@ def test_backtest_insufficient_below_thirty_then_stats():
 
 
 def test_backtest_runs_on_stored_data_and_says_insufficient(db):
+    """The backtest runs against the database and reports insufficient data."""
     storage.save_sentiment("2026-10-20", {"label": "Bull", "score": 0.3, "n": 5, "counts": {}}, {})
     result = backtest.run_backtest(today=date(2026, 10, 30))
     assert result["results"]["next_day"]["insufficient"] is True
@@ -203,12 +223,14 @@ def test_backtest_runs_on_stored_data_and_says_insufficient(db):
 # ---- key points and the day-over-day diff ---------------------------------
 
 def kp(day, stories, label="Neutral", score=0.0, prices=None):
+    """A key-points dict for the diff tests."""
     return {"date": day, "top_stories": [{"title": t, "source": "s", "magnitude": 4, "direction": "Bullish"}
                                          for t in stories],
             "sentiment": {"label": label, "score": score, "n": 5}, "prices": prices or {}}
 
 
 def test_diff_finds_new_dropped_sentiment_and_price_changes():
+    """The diff lists new and dropped stories, the sentiment change and price changes, and renders them as text."""
     y = kp("2026-10-25", [UKRAINE[0], "Saudi Arabia intercepts missile near Red Sea oil hub"], "Neutral", 0.05,
            {"BRENT": {"price": 80.0, "as_of": "t1"}, "WTI": {"price": 76.0, "as_of": "t1"}})
     t = kp("2026-10-26", [UKRAINE[1], "OPEC+ weighs December output increase, delegates say"], "Bull", 0.25,
@@ -226,12 +248,14 @@ def test_diff_finds_new_dropped_sentiment_and_price_changes():
 
 
 def test_diff_without_yesterday_says_so():
+    """With no yesterday the diff is unavailable and the text says so."""
     d = key_points.diff_key_points(kp("2026-10-26", ["x"]), None)
     assert d == {"available": False}
     assert key_points.diff_text(d, None, None) == key_points.UNAVAILABLE_TEXT
 
 
 def test_previous_key_points_needs_a_stored_brief_with_key_points(db):
+    """Yesterday's key points exist only if its brief was stored with them."""
     assert key_points.previous_key_points(date(2026, 10, 26), storage.brief_for_date) is None
     storage.save_brief("2026-10-25", "published", 0.95, "text", {})                    # old brief, no key points
     assert key_points.previous_key_points(date(2026, 10, 26), storage.brief_for_date) is None
@@ -240,6 +264,7 @@ def test_previous_key_points_needs_a_stored_brief_with_key_points(db):
 
 
 def _run_eval(monkeypatch, seen):
+    """Stub the pipeline pieces so run_evaluation can run offline and record what it passes on."""
     monkeypatch.setattr(run_evaluation.data_sources, "refresh_eia_weekly", lambda: None)
     monkeypatch.setattr(run_evaluation.data_sources, "fetch_eia_data", lambda: {})
     monkeypatch.setattr(run_evaluation.sentiment_analysis, "current_sentiment",
@@ -247,6 +272,7 @@ def _run_eval(monkeypatch, seen):
     monkeypatch.setattr(run_evaluation.rag_pipeline, "history_context", lambda q: "")
 
     def fake_generate(articles, sentiment, eia, history, brief_date, **kw):
+        """Fake generate_brief: capture the keyword arguments and return a small brief."""
         seen["kw"] = kw
         return "# t\n\n" + (f"## What changed since yesterday\n\n{kw['changes_missing_text']}\n\n" if kw["changes_missing_text"] else "") + "body"
 
@@ -257,6 +283,7 @@ def _run_eval(monkeypatch, seen):
 
 
 def test_run_evaluation_with_no_yesterday_states_it_and_stores_key_points(db, monkeypatch):
+    """Without yesterday the brief says so, and today's key points are stored."""
     storage.save_articles([article("a", "Oil rises on supply fears", "reuters.com", collected_at=storage.utcnow())])
     seen = {}
     _run_eval(monkeypatch, seen)
@@ -269,6 +296,7 @@ def test_run_evaluation_with_no_yesterday_states_it_and_stores_key_points(db, mo
 
 
 def test_run_evaluation_with_yesterday_passes_the_diff(db, monkeypatch):
+    """With yesterday's key points the diff goes to the generator and the evaluator."""
     today = datetime.fromisoformat(storage.utcnow()).date()
     storage.save_brief((today - timedelta(days=1)).isoformat(), "published", 0.95, "old", {},
                        key_points=kp((today - timedelta(days=1)).isoformat(), ["An older story about gas"], "Bear", -0.3))
@@ -283,6 +311,7 @@ def test_run_evaluation_with_yesterday_passes_the_diff(db, monkeypatch):
 # ---- analyst feedback -----------------------------------------------------
 
 def test_add_feedback_validates_and_caps(db):
+    """Invalid feedback is rejected and long comments are truncated."""
     with pytest.raises(ValueError):
         storage.add_feedback("nonsense", "1", "up")
     with pytest.raises(ValueError):
@@ -295,11 +324,13 @@ def test_add_feedback_validates_and_caps(db):
 
 
 def _tagged(db_url, direction):
+    """Store an article with a direction and return its id."""
     storage.save_articles([article(db_url, f"Headline {db_url}", direction=direction)])
     return storage._rows("SELECT id FROM articles WHERE url = ?", (db_url,))[0]["id"]
 
 
 def test_golden_export_and_agreement_report(db, tmp_path):
+    """The CSV export and the agreement report count agree, disagree and uncorrected feedback correctly."""
     a1, a2, a3, a4 = (_tagged("u1", "Bullish"), _tagged("u2", "Bullish"), _tagged("u3", "Bearish"), _tagged("u4", "Neutral"))
     storage.add_feedback("article_tag", a1, "up")                              # agree, no correction
     storage.add_feedback("article_tag", a2, "down", "wrong", "Bearish")        # disagree, corrected
@@ -321,6 +352,7 @@ def test_golden_export_and_agreement_report(db, tmp_path):
 
 
 def test_dashboard_feedback_form_inserts_a_row(db):
+    """Submitting the dashboard form stores one feedback row."""
     storage.save_articles([article("fb1", "Oil rises on supply fears", "reuters.com", collected_at=storage.utcnow())])
     at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60).run()
     assert not at.exception
@@ -334,6 +366,7 @@ def test_dashboard_feedback_form_inserts_a_row(db):
 
 
 def test_dashboard_shows_one_row_per_story_with_outlet_count(db):
+    """The verified feed shows one row per story with its outlet count."""
     storage.save_articles([article(f"u{i}", t, f"outlet{i}.com", collected_at=storage.utcnow())
                            for i, t in enumerate(UKRAINE)])
     story_cluster.cluster_new_articles()
@@ -344,6 +377,7 @@ def test_dashboard_shows_one_row_per_story_with_outlet_count(db):
 
 
 def test_research_page_renders_with_insufficient_data(db):
+    """The Research page renders and says 'Insufficient data'."""
     at = AppTest.from_file(str(ROOT / "pages" / "1_Research.py"), default_timeout=60).run()
     assert not at.exception
     assert any("Insufficient data" in i.value for i in at.info)

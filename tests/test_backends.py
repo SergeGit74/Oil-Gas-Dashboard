@@ -16,6 +16,7 @@ import copy_sqlite_to_postgres as copier  # noqa: E402
 
 
 def article(url, **extra):
+    """A complete article row with sensible defaults."""
     base = {"url": url, "title": f"Title {url}", "source": "reuters.com", "snippet": "s", "published_at": "2026-10-26",
             "collected_at": "2026-10-26T12:00:00+00:00", "category": "Supply", "direction": "Bullish", "magnitude": 3,
             "confidence": 0.8, "source_tier": "wire_trade", "content_type": "news", "corroboration": 0, "reason": "r",
@@ -26,17 +27,20 @@ def article(url, **extra):
 # ---- pure helpers ---------------------------------------------------------
 
 def test_upsert_sql_ignore_and_replace_forms():
+    """upsert_sql builds the DO NOTHING and DO UPDATE forms."""
     assert dbmod.upsert_sql("t", ["a", "b"]) == "INSERT INTO t (a,b) VALUES (?,?) ON CONFLICT DO NOTHING"
     assert dbmod.upsert_sql("t", ["k", "a", "b"], ["k"]) == \
         "INSERT INTO t (k,a,b) VALUES (?,?,?) ON CONFLICT (k) DO UPDATE SET a=excluded.a,b=excluded.b"
 
 
 def test_postgres_ddl_translation():
+    """SQLite DDL becomes BIGSERIAL and DOUBLE PRECISION without touching words like 'realm'."""
     out = dbmod.pg_ddl("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, price REAL NOT NULL, realm TEXT)")
     assert "BIGSERIAL PRIMARY KEY" in out and "price DOUBLE PRECISION NOT NULL" in out and "realm TEXT" in out
 
 
 def test_safe_url_hides_the_password():
+    """A database URL is shown without its password."""
     assert dbmod.safe_url("postgresql://me:s3cret@db.example.test:5432/oil") == "postgresql://me:***@db.example.test:5432/oil"
     assert dbmod.safe_url("postgresql://me@db.example.test/oil") == "postgresql://me@db.example.test/oil"
     assert "s3cret" not in dbmod.safe_url("postgresql://me:s3cret@h/db")
@@ -45,10 +49,12 @@ def test_safe_url_hides_the_password():
 # ---- both backends --------------------------------------------------------
 
 def test_backend_matches_the_parameter(db):
+    """Each test leg really runs on the backend it is named for."""
     assert dbmod.backend() == db
 
 
 def test_migrations_are_recorded_and_rerunning_is_a_noop(db):
+    """All three migrations are recorded once and re-running changes nothing."""
     versions = [r["version"] for r in storage._rows("SELECT version FROM schema_migrations ORDER BY version")]
     assert versions == [v for v, _, _ in migrations.MIGRATIONS] == [1, 2, 3]
     with storage.connect() as conn:
@@ -58,6 +64,7 @@ def test_migrations_are_recorded_and_rerunning_is_a_noop(db):
 
 
 def test_a_database_from_before_versioning_is_adopted_without_losing_data(db):
+    """A database without schema_migrations and with missing columns is upgraded in place and keeps its rows."""
     storage.save_articles([article("keep-me")])
     with storage.connect() as conn:                      # recreate the pre-versioning state
         conn.execute("DROP TABLE schema_migrations")
@@ -74,6 +81,7 @@ def test_a_database_from_before_versioning_is_adopted_without_losing_data(db):
 
 
 def test_percent_signs_in_sql_are_safe(db):
+    """SQL containing a literal % (a LIKE pattern) works on both backends."""
     assert storage.latest_marker() == 0                  # contains LIKE 'ask_desk%'
     storage.save_run_cost({"job_name": "ask_desk", "started_at": "t", "finished_at": "t", "status": "success",
                            "claude_usd": 0, "apify_usd": 0, "serper_usd": 0, "total_usd": 0, "input_tokens": 0,
@@ -85,6 +93,7 @@ def test_percent_signs_in_sql_are_safe(db):
 
 
 def test_upserts_ignore_or_replace_as_designed(db):
+    """Duplicate URLs are ignored; sentiment and briefs are replaced."""
     storage.save_articles([article("same", title="first")])
     storage.save_articles([article("same", title="second")])                          # ignored: URL already stored
     assert [r["title"] for r in storage._rows("SELECT title FROM articles")] == ["first"]
@@ -98,12 +107,14 @@ def test_upserts_ignore_or_replace_as_designed(db):
 
 
 def test_null_magnitude_sorts_last_on_both_backends(db):
+    """Ordering by impact puts articles without a magnitude last on SQLite and PostgreSQL."""
     storage.save_articles([article("none", magnitude=None), article("three", magnitude=3), article("five", magnitude=5)])
     rows = storage.verified_articles("2026-01-01T00:00:00+00:00")
     assert [r["url"] for r in rows] == ["five", "three", "none"]
 
 
 def test_price_series_keeps_one_point_per_quote_time(db):
+    """Several providers quoting the same instant give one chart point, the newest row."""
     t = "2026-10-26T10:00:00+00:00"
     storage.save_ticks([
         {"indicator_key": "BRENT", "ts": t, "price": 80.0, "provider": "eia", "fetched_at": t},
@@ -114,6 +125,7 @@ def test_price_series_keeps_one_point_per_quote_time(db):
 
 
 def test_events_unique_key_treats_missing_time_as_one_value(db):
+    """Events without a time are not duplicated when loaded repeatedly."""
     row = {"date": "2026-10-28", "time": None, "tz": None, "title": "FOMC", "category": "x", "source_url": None}
     storage.upsert_events([row, row])
     storage.upsert_events([row])
@@ -121,6 +133,7 @@ def test_events_unique_key_treats_missing_time_as_one_value(db):
 
 
 def test_floats_and_integers_round_trip(db):
+    """Floats and integers come back with the right values and types."""
     storage.save_articles([article("f", confidence=0.123456789, magnitude=4)])
     got = storage._rows("SELECT confidence, magnitude FROM articles")[0]
     assert got["confidence"] == pytest.approx(0.123456789) and got["magnitude"] == 4 and isinstance(got["magnitude"], int)
@@ -145,16 +158,19 @@ def sqlite_source(tmp_path, monkeypatch):
 
 
 def file_hash(path):
+    """SHA-256 of a file's bytes (to prove the source database was not changed)."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def pg_count(url, table):
+    """Row count of a PostgreSQL table."""
     import psycopg
     with psycopg.connect(url) as conn:
         return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
 def test_copy_moves_every_table_and_leaves_the_source_untouched(sqlite_source, pg_clean, monkeypatch):
+    """Every table is copied, the SQLite file is unchanged, and new rows get non-colliding ids."""
     before = file_hash(sqlite_source)
     report = copier.copy(sqlite_source, pg_clean, log=lambda *_: None)
     assert report["articles"] == {"source": 5, "copied": 5, "target": 5}
@@ -170,6 +186,7 @@ def test_copy_moves_every_table_and_leaves_the_source_untouched(sqlite_source, p
 
 
 def test_copy_refuses_a_non_empty_target_and_append_skips_existing_rows(sqlite_source, pg_clean):
+    """A non-empty target is refused; --append adds nothing that already exists."""
     copier.copy(sqlite_source, pg_clean, log=lambda *_: None)
     with pytest.raises(copier.CopyError, match="already contains data"):
         copier.copy(sqlite_source, pg_clean, log=lambda *_: None)
@@ -178,6 +195,7 @@ def test_copy_refuses_a_non_empty_target_and_append_skips_existing_rows(sqlite_s
 
 
 def test_dry_run_writes_nothing(sqlite_source, pg_clean):
+    """A dry run counts rows but creates no tables in the target."""
     report = copier.copy(sqlite_source, pg_clean, dry_run=True, log=lambda *_: None)
     assert report["articles"]["source"] == 5 and report["articles"]["copied"] == 0
     import psycopg
@@ -186,6 +204,7 @@ def test_dry_run_writes_nothing(sqlite_source, pg_clean):
 
 
 def test_a_bad_row_rolls_the_whole_copy_back(sqlite_source, pg_clean):
+    """One row PostgreSQL rejects aborts the copy and leaves the target exactly as it was."""
     raw = sqlite3.connect(sqlite_source)
     raw.execute("INSERT INTO articles (url, magnitude) VALUES ('bad', 'not-a-number')")   # SQLite accepts it, PostgreSQL will not
     raw.commit()
@@ -198,5 +217,6 @@ def test_a_bad_row_rolls_the_whole_copy_back(sqlite_source, pg_clean):
 
 
 def test_copy_reports_a_missing_source_file(tmp_path, pg_clean):
+    """A missing SQLite file is reported as a clear error."""
     with pytest.raises(copier.CopyError, match="not found"):
         copier.copy(tmp_path / "nope.db", pg_clean)

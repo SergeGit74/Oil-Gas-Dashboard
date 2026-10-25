@@ -30,6 +30,7 @@ class CopyError(Exception):
 
 
 def _source_tables(src):
+    """Names of the SQLite data tables (internal and migration tables excluded)."""
     rows = src.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").fetchall()
     return sorted(r[0] for r in rows if r[0] != "schema_migrations")
 
@@ -101,6 +102,7 @@ def copy(sqlite_path, pg_url, append=False, dry_run=False, log=print):
 
 
 def main():
+    """Command-line entry point: parse arguments, run the copy and print the per-table report."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--sqlite", default=config.DB_PATH, help="source SQLite file (default: DB_PATH)")
     parser.add_argument("--pg-url", default=os.environ.get("DATABASE_URL"), help="target URL (default: DATABASE_URL)")

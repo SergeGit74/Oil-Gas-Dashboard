@@ -93,6 +93,7 @@ PROVIDER_LIMITS = {
 
 
 def get(name, default=""):
+    """Read an environment setting at call time (so .env edits and test patches are seen)."""
     return os.getenv(name, default)
 
 

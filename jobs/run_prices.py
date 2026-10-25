@@ -11,6 +11,7 @@ log = logging.getLogger("run_prices")
 
 
 def _chunks(items, size):
+    """Split a list into consecutive pieces of at most `size`."""
     for i in range(0, len(items), max(1, size)):
         yield items[i:i + size]
 
@@ -63,6 +64,7 @@ def run_prices(now=None, providers=None, quota=None, indicators=None):
 
 
 def purge_old_ticks():
+    """Roll old ticks into daily closes, purge them, and log the result."""
     days, deleted = storage.purge_ticks(config.PRICE_TICK_RETENTION_DAYS)
     storage.log_job("price_retention", "success", f"{days} day rows rolled up, {deleted} ticks purged")
     return days, deleted

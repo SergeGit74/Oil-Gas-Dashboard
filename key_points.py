@@ -28,6 +28,7 @@ def build_key_points(brief_date, articles, sentiment, ticks):
 
 
 def _same_story(a, b):
+    """Whether two top stories are the same by headline similarity."""
     return story_cluster.title_overlap(a["title"], b["title"]) >= config.CLUSTER_SIMILARITY_THRESHOLD
 
 

@@ -185,10 +185,12 @@ ADDED_COLUMNS = {
 
 
 def _baseline(conn):
+    """Migration 1: create the original tables and indexes."""
     conn.script(BASELINE)
 
 
 def _added_columns(conn):
+    """Migration 2: add the columns introduced after the baseline, only where missing."""
     for table, columns in ADDED_COLUMNS.items():
         existing = conn.columns(table)
         for col, decl in columns.items():
@@ -197,6 +199,7 @@ def _added_columns(conn):
 
 
 def _cluster_index(conn):
+    """Migration 3: index articles.cluster_id."""
     conn.ddl("CREATE INDEX IF NOT EXISTS idx_articles_cluster ON articles(cluster_id)")
 
 
@@ -209,6 +212,7 @@ LATEST = MIGRATIONS[-1][0]
 
 
 def applied_versions(conn):
+    """The migration versions already recorded in schema_migrations."""
     if not conn.table_exists("schema_migrations"):
         return set()
     return {r["version"] for r in conn.execute("SELECT version FROM schema_migrations")}

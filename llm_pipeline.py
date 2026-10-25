@@ -60,6 +60,7 @@ def site_key(domain):
 
 
 def source_tier(domain):
+    """The trust tier of a domain (official, wire_trade, aggregator, unknown)."""
     entry = registry_domain(domain)
     return _DOMAIN_TIER[entry] if entry else "unknown"
 
@@ -97,6 +98,7 @@ _INJECTION_RE = re.compile("|".join(INJECTION_PATTERNS), re.I)
 
 
 def flag_injection(article):
+    """Whether an article's title or snippet looks like a prompt-injection attempt."""
     return bool(_INJECTION_RE.search(f"{article.get('title', '')} {article.get('snippet', '')}"))
 
 
@@ -144,6 +146,7 @@ TAG_SYSTEM = (
 
 
 def _validate_tag(tag, valid_ids):
+    """Whether a model-returned tag has a known id, category, direction and a 1-5 magnitude."""
     try:
         if tag["id"] not in valid_ids or tag["category"] not in CATEGORIES or tag["direction"] not in DIRECTIONS:
             return False
@@ -191,6 +194,7 @@ BRIEF_SYSTEM = (
 
 
 def format_sources(articles):
+    """The numbered <source> blocks given to the brief writer and the evaluator."""
     return "\n".join(
         f'<source id="{i}">\nTitle: {a["title"]}\nOutlet: {a["source"]} | Direction: {a.get("direction")} | '
         f'Impact: {a.get("magnitude")}\nSummary: {a.get("snippet", "")[:400]}\n</source>'

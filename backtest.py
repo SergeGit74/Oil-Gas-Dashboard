@@ -50,6 +50,7 @@ def build_observations(sentiment_rows, daily_rows, today=None):
 
 
 def _hit(label, ret_pct):
+    """Whether a sentiment label agreed with the return that followed (Bull up, Bear down, Neutral a small move)."""
     neutral_band = price_confirmation.NEUTRAL_MOVE_PCT
     if label == "Bull":
         return ret_pct > 0
@@ -78,6 +79,7 @@ def summarize(observations, horizon, min_obs=None):
 
 
 def run_backtest(today=None):
+    """Load the stored sentiment and Brent daily closes and return observations plus statistics for each horizon."""
     sentiment = storage.sentiment_history(limit=1000)
     daily = storage.latest_daily(BENCHMARK, limit=1000)
     obs = build_observations(sentiment, daily, today)

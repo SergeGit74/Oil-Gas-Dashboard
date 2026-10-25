@@ -11,6 +11,7 @@ import config
 
 
 def check_dashboard(port=8501):
+    """Container check: does Streamlit answer on its health endpoint?"""
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/_stcore/health", timeout=5) as resp:
             return resp.status == 200, "dashboard answering"
@@ -19,6 +20,7 @@ def check_dashboard(port=8501):
 
 
 def check_scheduler():
+    """Container check: did a collection cycle finish within the staleness window?"""
     import storage  # imported here so the dashboard check has no database dependency
 
     finished = storage.last_cycle_finished()

@@ -16,6 +16,7 @@ SECRET = "correct horse battery staple"
 
 @pytest.fixture(autouse=True)
 def fresh_limiter(monkeypatch):
+    """Autouse: start each test with a fresh login limiter and no real delay after a wrong guess."""
     auth.reset_limiter()
     monkeypatch.setattr(auth, "_sleep", lambda s: None)           # no real delay after a failed guess
     yield
@@ -31,22 +32,26 @@ def locked(monkeypatch, db):
 
 
 def submit(at, password):
+    """Type a password into the login form, press 'Sign in' and re-run the app."""
     at.text_input[0].input(password)
     [b for b in at.button if b.label == "Sign in"][0].click()
     return at.run()
 
 
 def page_text(at):
+    """All visible markdown, title and header text of the rendered page, joined."""
     return " ".join([m.value for m in at.markdown] + [t.value for t in at.title] + [h.value for h in at.header])
 
 
 def test_without_a_password_the_dashboard_is_open(db):
+    """With no DASHBOARD_PASSWORD the dashboard renders straight away."""
     at = AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception and "Oil & Gas Morning Intelligence" in page_text(at)
     assert not any(t.value == "Sign in" for t in at.title)
 
 
 def test_nothing_is_shown_before_login(locked):
+    """With a password set, only the login form renders: no brief, metrics, tables or refresh controls."""
     at = AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception
     assert [t.value for t in at.title] == ["Sign in"]
@@ -55,11 +60,13 @@ def test_nothing_is_shown_before_login(locked):
 
 
 def test_the_research_page_is_gated_too(locked):
+    """The Research page also shows only the login form before sign-in."""
     at = AppTest.from_file(RESEARCH, default_timeout=60).run()
     assert [t.value for t in at.title] == ["Sign in"] and len(at.warning) == 0
 
 
 def test_wrong_password_is_rejected_and_right_one_opens_the_dashboard(locked):
+    """A wrong password gets an error; the right one opens the dashboard and shows 'Sign out'."""
     at = AppTest.from_file(APP, default_timeout=60).run()
     at = submit(at, "nope")
     assert [e.value for e in at.error] == ["Wrong password."] and [t.value for t in at.title] == ["Sign in"]
@@ -70,6 +77,7 @@ def test_wrong_password_is_rejected_and_right_one_opens_the_dashboard(locked):
 
 
 def test_sign_out_returns_to_the_login_form(locked):
+    """Pressing 'Sign out' brings the login form back."""
     at = submit(AppTest.from_file(APP, default_timeout=60).run(), SECRET)
     [b for b in at.sidebar.button if b.label == "Sign out"][0].click()
     at.run()
@@ -77,6 +85,7 @@ def test_sign_out_returns_to_the_login_form(locked):
 
 
 def test_too_many_failures_lock_everyone_out_even_with_the_right_password(locked):
+    """After the maximum failures, even the right password is refused, in every session."""
     at = AppTest.from_file(APP, default_timeout=60).run()
     for _ in range(config.DASHBOARD_LOGIN_MAX_ATTEMPTS):
         at = submit(at, "guess")
@@ -89,6 +98,7 @@ def test_too_many_failures_lock_everyone_out_even_with_the_right_password(locked
 
 
 def test_limiter_lockout_expires_after_the_window():
+    """The lockout starts at the fifth failure and ends once the window has passed."""
     now = {"t": 1000.0}
     limiter = auth.LoginLimiter(clock=lambda: now["t"])
     for _ in range(4):
@@ -101,6 +111,7 @@ def test_limiter_lockout_expires_after_the_window():
 
 
 def test_old_failures_do_not_count_towards_the_lockout():
+    """Failures older than the window are forgotten."""
     now = {"t": 0.0}
     limiter = auth.LoginLimiter(clock=lambda: now["t"])
     for _ in range(4):
@@ -110,6 +121,7 @@ def test_old_failures_do_not_count_towards_the_lockout():
 
 
 def test_password_comparison():
+    """Exact matches pass; extra spaces, empty, None and wrong passwords fail; Unicode works."""
     assert auth.password_matches(SECRET, SECRET)
     assert not auth.password_matches(SECRET + " ", SECRET) and not auth.password_matches("", SECRET)
     assert not auth.password_matches(None, SECRET)
@@ -117,6 +129,7 @@ def test_password_comparison():
 
 
 def test_comparison_uses_a_constant_time_primitive(monkeypatch):
+    """The comparison goes through hmac.compare_digest on equal-length digests."""
     calls = []
     real = auth.hmac.compare_digest
     monkeypatch.setattr(auth.hmac, "compare_digest", lambda a, b: calls.append((len(a), len(b))) or real(a, b))

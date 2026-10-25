@@ -14,10 +14,12 @@ connect = db.connect
 
 
 def utcnow():
+    """Current UTC time as an ISO string (seconds)."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def hours_ago(hours):
+    """UTC ISO time `hours` ago."""
     return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
 
 
@@ -30,6 +32,7 @@ def init_db():
 
 
 def _rows(sql, params=()):
+    """Run a query and return all rows as dicts."""
     with connect() as conn:
         return [dict(r) for r in conn.execute(sql, params)]
 
@@ -37,6 +40,7 @@ def _rows(sql, params=()):
 # ---- articles -------------------------------------------------------------
 
 def known_urls(urls):
+    """Which of the given URLs are already stored."""
     urls = list(urls)
     found = set()
     with connect() as conn:
@@ -48,6 +52,7 @@ def known_urls(urls):
 
 
 def save_articles(rows):
+    """Insert new articles; a URL already stored is ignored."""
     cols = ["url", "title", "source", "snippet", "published_at", "collected_at", "category", "direction",
             "magnitude", "confidence", "source_tier", "content_type", "corroboration", "reason",
             "flagged_injection", "corroboration_json"]
@@ -57,6 +62,7 @@ def save_articles(rows):
 
 
 def verified_articles(since_iso, directional_only=False, limit=None):
+    """Verified articles collected since a time (confidence at the threshold, not injection-flagged), highest impact first."""
     sql = ("SELECT * FROM articles WHERE collected_at >= ? AND flagged_injection = 0 AND confidence >= ?")
     if directional_only:
         sql += " AND direction IS NOT NULL"
@@ -69,6 +75,7 @@ def verified_articles(since_iso, directional_only=False, limit=None):
 
 
 def unverified_articles(since_iso, limit=50):
+    """Articles kept out of the pipeline: injection-flagged or low confidence, newest first."""
     return _rows(
         "SELECT * FROM articles WHERE collected_at >= ? AND (flagged_injection = 1 OR confidence IS NULL "
         "OR confidence < ?) ORDER BY collected_at DESC LIMIT ?",
@@ -82,6 +89,7 @@ def articles_needing_cluster(since_iso):
 
 
 def clustered_articles_since(since_iso):
+    """Articles collected since a time that already have a cluster, in id order."""
     return _rows("SELECT id, title, collected_at, cluster_id FROM articles WHERE cluster_id IS NOT NULL "
                  "AND collected_at >= ? ORDER BY id", (since_iso,))
 
@@ -94,6 +102,7 @@ def set_clusters(assigned):
 
 
 def cluster_members(cluster_ids):
+    """Basic fields of every article in the given clusters."""
     cluster_ids = list(cluster_ids)
     if not cluster_ids:
         return []
@@ -103,11 +112,13 @@ def cluster_members(cluster_ids):
 
 
 def unindexed_verified():
+    """Verified articles not yet embedded into the vector store."""
     return _rows("SELECT * FROM articles WHERE indexed = 0 AND flagged_injection = 0 AND confidence >= ?",
                  (config.VERIFIED_MIN_CONFIDENCE,))
 
 
 def mark_indexed(ids):
+    """Mark articles as embedded."""
     with connect() as conn:
         conn.executemany("UPDATE articles SET indexed = 1 WHERE id = ?", [(i,) for i in ids])
 
@@ -126,11 +137,13 @@ def save_brief(date, status, groundedness, text, evaluation, key_points=None, so
 
 
 def brief_for_date(date):
+    """The brief row for a date, or None."""
     rows = _rows("SELECT * FROM briefs WHERE date = ?", (date,))
     return rows[0] if rows else None
 
 
 def latest_brief():
+    """The most recent brief row, or None."""
     rows = _rows("SELECT * FROM briefs ORDER BY date DESC LIMIT 1")
     return rows[0] if rows else None
 
@@ -159,6 +172,7 @@ def claim_daily_run(job, day, max_attempts=2, cooldown_min=30, now=None):
 # ---- market prices --------------------------------------------------------
 
 def save_ticks(rows):
+    """Insert fetched price quotes."""
     cols = ["indicator_key", "ts", "price", "prev_close", "change_pct", "provider", "delayed_minutes",
             "currency", "fetched_at"]
     with connect() as conn:
@@ -181,11 +195,13 @@ def last_fetch_times():
 
 def price_series(indicator_key, since_iso):
     # One point per quote time (the newest row if several providers quoted the same instant).
+    """(ts, price) points since a time, one per quote time, oldest first."""
     return _rows("SELECT ts, price FROM price_ticks WHERE id IN (SELECT MAX(id) FROM price_ticks "
                  "WHERE indicator_key = ? AND ts >= ? GROUP BY ts) ORDER BY ts", (indicator_key, since_iso))
 
 
 def latest_daily(indicator_key, limit=30):
+    """Daily price rows for an indicator, newest first."""
     return _rows("SELECT * FROM price_daily WHERE indicator_key = ? ORDER BY day DESC LIMIT ?",
                  (indicator_key, limit))
 
@@ -228,6 +244,7 @@ def eia_weekly(series_key, limit=5):
 
 
 def last_eia_weekly_fetch():
+    """ISO time of the newest weekly EIA fetch, or None."""
     rows = _rows("SELECT MAX(fetched_at) AS t FROM eia_weekly")
     return rows[0]["t"]
 
@@ -269,6 +286,7 @@ def last_success_time(job_names):
 
 
 def last_price_fetch():
+    """ISO time of the newest price fetch, or None."""
     rows = _rows("SELECT MAX(fetched_at) AS t FROM price_ticks")
     return rows[0]["t"]
 
@@ -286,6 +304,7 @@ def reserve_quota(provider, day_utc, credits, cap):
 
 
 def quota_used(provider, day_utc):
+    """Credits used by a provider on a UTC day."""
     rows = _rows("SELECT calls FROM api_quota WHERE provider = ? AND day_utc = ?", (provider, day_utc))
     return rows[0]["calls"] if rows else 0
 
@@ -309,6 +328,7 @@ def record_alert(cluster_key, article, status, now=None):
 
 
 def set_alert_status(cluster_key, status):
+    """Update the status of a story's alert row."""
     with connect() as conn:
         conn.execute("UPDATE alert_log SET status = ? WHERE cluster_key = ?", (status, cluster_key))
 
@@ -321,14 +341,17 @@ def alerts_in_last_hour(now=None):
 
 
 def recent_alerts(limit=20):
+    """The newest alert_log rows."""
     return _rows("SELECT * FROM alert_log ORDER BY id DESC LIMIT ?", (limit,))
 
 
 def email_sent(day, kind):
+    """Whether this kind of email was already sent for a day."""
     return bool(_rows("SELECT 1 FROM email_log WHERE day = ? AND kind = ?", (day, kind)))
 
 
 def record_email_sent(day, kind, recipients):
+    """Mark an email kind as sent for a day."""
     with connect() as conn:
         conn.execute(db.upsert_sql("email_log", ["day", "kind", "recipients", "sent_at"], ["day", "kind"]),
                      (day, kind, recipients, utcnow()))
@@ -355,10 +378,12 @@ def add_feedback(item_type, item_id, rating, comment="", analyst_label=None):
 
 
 def all_feedback():
+    """All analyst feedback, oldest first."""
     return _rows("SELECT * FROM feedback ORDER BY id")
 
 
 def article_by_id(article_id):
+    """One article row by id, or None."""
     rows = _rows("SELECT * FROM articles WHERE id = ?", (article_id,))
     return rows[0] if rows else None
 
@@ -366,22 +391,26 @@ def article_by_id(article_id):
 # ---- job runs -------------------------------------------------------------
 
 def log_job(job_name, status, detail=""):
+    """Record a job or source status in job_runs (detail is truncated)."""
     with connect() as conn:
         conn.execute("INSERT INTO job_runs (job_name, status, detail, created_at) VALUES (?,?,?,?)",
                      (job_name, status, str(detail)[:2000], utcnow()))
 
 
 def recent_job_runs(job_name, limit=10):
+    """The newest job_runs rows for one job."""
     return _rows("SELECT * FROM job_runs WHERE job_name = ? ORDER BY id DESC LIMIT ?", (job_name, limit))
 
 
 def latest_job_runs(limit=30):
+    """The newest job_runs rows across all jobs."""
     return _rows("SELECT * FROM job_runs ORDER BY id DESC LIMIT ?", (limit,))
 
 
 # ---- sentiment ------------------------------------------------------------
 
 def save_sentiment(date, sentiment, price):
+    """Save (or replace) a day's sentiment and price-check snapshot."""
     with connect() as conn:
         conn.execute(
             db.upsert_sql("sentiment_history", ["date", "label", "score", "n_articles", "counts_json",
@@ -392,12 +421,14 @@ def save_sentiment(date, sentiment, price):
 
 
 def sentiment_history(limit=30):
+    """The newest daily sentiment rows."""
     return _rows("SELECT * FROM sentiment_history ORDER BY date DESC LIMIT ?", (limit,))
 
 
 # ---- costs ----------------------------------------------------------------
 
 def save_run_cost(rec):
+    """Save one finished run's cost record."""
     with connect() as conn:
         conn.execute(
             "INSERT INTO run_costs (job_name, started_at, finished_at, status, claude_usd, apify_usd, serper_usd, "
@@ -422,6 +453,7 @@ def last_cycle_finished():
 
 def recent_run_costs(limit=20):
     # The price poller records a zero-cost run every few minutes; leave it out so real runs stay visible.
+    """The newest run_costs rows, leaving out the zero-cost price polls."""
     return _rows("SELECT * FROM run_costs WHERE job_name != 'price_poll' ORDER BY id DESC LIMIT ?", (limit,))
 
 

@@ -10,6 +10,7 @@ APP = str(Path(__file__).resolve().parent.parent / "app.py")
 
 
 def test_renders_with_no_keys_and_empty_store(db):
+    """The dashboard renders with no API keys and an empty store, showing 'Brief pending' and 'No prices yet'."""
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert not at.exception
     assert any("Brief pending" in i.value for i in at.info)
@@ -17,6 +18,7 @@ def test_renders_with_no_keys_and_empty_store(db):
 
 
 def test_renders_price_tiles_from_stored_ticks(db):
+    """A stored tick appears as a price tile."""
     now = storage.utcnow()
     storage.save_ticks([{"indicator_key": "BRENT", "ts": now, "price": 80.0, "prev_close": 79.0,
                          "change_pct": 1.27, "provider": "yahoo", "delayed_minutes": None, "currency": "USD",
@@ -27,6 +29,7 @@ def test_renders_price_tiles_from_stored_ticks(db):
 
 
 def test_source_health_without_notify_sends_and_writes_nothing(db, monkeypatch):
+    """check_source_health(notify=False) reports bad sources without sending an alert or writing to job_runs."""
     for _ in range(4):
         storage.log_job("fetch_prices", "degraded", "x")
     sent = []

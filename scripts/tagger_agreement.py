@@ -12,6 +12,7 @@ import feedback_tools  # noqa: E402
 
 
 def main():
+    """Print the tagger-agreement report."""
     report = feedback_tools.agreement_report()
     print(json.dumps(report, indent=2))
     if not report["judged"]:

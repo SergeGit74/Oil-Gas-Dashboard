@@ -19,6 +19,7 @@ SERPER_MIN_MAGNITUDE = 3
 
 
 def _dedupe(articles):
+    """Drop articles whose normalized URL repeats, keeping the first."""
     seen, out = set(), []
     for a in articles:
         if a["url"] not in seen:

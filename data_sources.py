@@ -56,11 +56,13 @@ def normalize_url(url):
 
 
 def domain_of(url):
+    """The host of a URL without a leading 'www.'."""
     host = urlsplit(url).netloc.lower()
     return host[4:] if host.startswith("www.") else host
 
 
 def _article(url, title, published_at="", snippet="", source=None, **extra):
+    """Build the common article dict (normalized URL, trimmed text, default source) used by every feed."""
     url = normalize_url(url)
     return {"url": url, "title": (title or "").strip(), "published_at": published_at or "",
             "snippet": (snippet or "").strip(), "source": source or domain_of(url), **extra}
@@ -77,6 +79,7 @@ EIA_SERIES = {
 
 
 def _eia_series(route, series, frequency, length=10):
+    """Fetch the newest `length` observations of one EIA series as [(period, value)], newest first."""
     params = {
         "api_key": config.get("EIA_API_KEY"), "frequency": frequency, "data[0]": "value",
         "facets[series][]": series, "sort[0][column]": "period", "sort[0][direction]": "desc", "length": length,
@@ -215,6 +218,7 @@ def _normalize_apify_items(items):
 
 
 def _apify_cost(run, n_results):
+    """The cost of an Apify run: its reported usage, or an estimate from the result count (flagged True)."""
     usd = run.get("usageTotalUsd") if run else None
     if usd is None:
         return pricing.apify_fallback_cost(n_results), True
@@ -222,6 +226,7 @@ def _apify_cost(run, n_results):
 
 
 def _run_apify_once():
+    """Start the Apify actor, wait for it (aborting past the time limit), cost it and return its dataset items."""
     token = config.get("APIFY_TOKEN")
     try:
         resp = requests.post(f"{APIFY_BASE}/acts/{APIFY_ACTOR}/runs", params={"token": token},
@@ -262,6 +267,7 @@ def _run_apify_once():
 
 
 def _get_run(run_id, token):
+    """Fetch an Apify run's current record, or None if the request fails."""
     try:
         r = requests.get(f"{APIFY_BASE}/actor-runs/{run_id}", params={"token": token}, timeout=30)
         return r.json()["data"] if r.ok else None

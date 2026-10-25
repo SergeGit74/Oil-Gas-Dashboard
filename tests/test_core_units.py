@@ -26,16 +26,19 @@ import storage
     ("  https://example.com/a/  ", "https://example.com/a"),                                   # whitespace trimmed
 ])
 def test_normalize_url(raw, expected):
+    """URLs are normalized (host case, tracking parameters, fragment, trailing slash, whitespace)."""
     assert data_sources.normalize_url(raw) == expected
 
 
 def test_normalize_url_makes_variants_equal():
+    """Different spellings of one story's URL normalize to the same string."""
     a = data_sources.normalize_url("https://Example.com/story/?utm_campaign=a#top")
     b = data_sources.normalize_url("https://example.com/story")
     assert a == b
 
 
 def test_domain_of_strips_www_only():
+    """'www.' is removed but other subdomains are kept."""
     assert data_sources.domain_of("https://www.reuters.com/x") == "reuters.com"
     assert data_sources.domain_of("https://uk.reuters.com/x") == "uk.reuters.com"
 
@@ -43,10 +46,12 @@ def test_domain_of_strips_www_only():
 # ---- sentiment weighting --------------------------------------------------
 
 def tagged(direction, magnitude, confidence):
+    """A minimal direction-tagged article for the scoring tests."""
     return {"direction": direction, "magnitude": magnitude, "confidence": confidence}
 
 
 def test_score_is_direction_times_magnitude_over_five_times_confidence():
+    """The score is direction x (magnitude / 5) x confidence, averaged."""
     assert sentiment_analysis.score_articles([tagged("Bullish", 3, 0.5)])["score"] == pytest.approx(0.3)
     assert sentiment_analysis.score_articles([tagged("Bearish", 5, 0.8)])["score"] == pytest.approx(-0.8)
     two = sentiment_analysis.score_articles([tagged("Bullish", 5, 1.0), tagged("Bearish", 5, 1.0)])
@@ -54,6 +59,7 @@ def test_score_is_direction_times_magnitude_over_five_times_confidence():
 
 
 def test_mixed_and_neutral_count_as_zero_but_are_counted():
+    """Mixed and Neutral add zero to the score but still count in n and the breakdown."""
     got = sentiment_analysis.score_articles([tagged("Bullish", 5, 1.0), tagged("Mixed", 5, 1.0),
                                              tagged("Neutral", 5, 1.0)])
     assert got["score"] == pytest.approx(1 / 3, abs=1e-4) and got["n"] == 3
@@ -61,12 +67,14 @@ def test_mixed_and_neutral_count_as_zero_but_are_counted():
 
 
 def test_label_thresholds_are_inclusive():
+    """Scores of exactly +0.15 and -0.15 are Bull and Bear; just inside is Neutral."""
     assert sentiment_analysis.score_articles([tagged("Bullish", 3, 0.25)])["label"] == "Bull"    # exactly +0.15
     assert sentiment_analysis.score_articles([tagged("Bearish", 3, 0.25)])["label"] == "Bear"    # exactly -0.15
     assert sentiment_analysis.score_articles([tagged("Bullish", 3, 0.2)])["label"] == "Neutral"  # +0.12
 
 
 def test_rows_without_a_direction_are_ignored_and_empty_input_is_neutral():
+    """Untagged rows are ignored; no input gives a Neutral zero."""
     got = sentiment_analysis.score_articles([tagged(None, 5, 1.0), {"magnitude": 4, "confidence": 1}])
     assert got == {"label": "Neutral", "score": 0.0, "n": 0, "counts": {"Bullish": 0, "Bearish": 0, "Neutral": 0, "Mixed": 0}}
 
@@ -74,6 +82,7 @@ def test_rows_without_a_direction_are_ignored_and_empty_input_is_neutral():
 # ---- price confirmation ---------------------------------------------------
 
 def brent(latest, previous):
+    """Two EIA Brent observations, newest first."""
     return {"brent": [("2026-10-20", latest), ("2026-10-19", previous)]}
 
 
@@ -83,28 +92,33 @@ def brent(latest, previous):
     ("Neutral", 102.0, "Partial"), ("Bull", 100.3, "Partial"),                       # a move under 0.5% is Neutral
 ])
 def test_price_confirmation_status(label, latest, expected):
+    """Confirmed, Partial and Divergent follow the sentiment label and the Brent move (under 0.5% counts as Neutral)."""
     assert price_confirmation.confirm_price(label, brent(latest, 100.0))["status"] == expected
 
 
 def test_price_confirmation_reports_price_and_rounded_change():
+    """The price check returns the latest price and the change rounded to two decimals."""
     got = price_confirmation.confirm_price("Bull", brent(101.2345, 100.0))
     assert got == {"benchmark": "Brent", "price": 101.2345, "change_pct": 1.23, "status": "Confirmed"}
 
 
 @pytest.mark.parametrize("eia", [None, {}, {"brent": []}, {"brent": [("d", 100.0)]}, {"brent": [("d2", 100.0), ("d1", 0)]}])
 def test_price_confirmation_unavailable(eia):
+    """Missing or unusable price data gives Unavailable."""
     assert price_confirmation.confirm_price("Bull", eia)["status"] == "Unavailable"
 
 
 # ---- cost math ------------------------------------------------------------
 
 def test_claude_cost_from_tokens():
+    """Claude cost is tokens x price per million; an unpriced model gives None."""
     assert pricing.claude_cost("claude-sonnet-5-5", 1000, 500) == pytest.approx(0.007)       # 2.00 in, 10.00 out per Mtok
     assert pricing.claude_cost("claude-sonnet-5-5", 0, 0) == 0
     assert pricing.claude_cost("some-unpriced-model", 1000, 500) is None
 
 
 def test_price_overrides_come_from_the_environment(monkeypatch):
+    """Price and multiplier overrides in the environment change the cost."""
     monkeypatch.setenv("SONNET_INPUT_USD_PER_MTOK", "4")
     assert pricing.claude_cost("claude-sonnet-5-5", 1000, 500) == pytest.approx(0.009)
     monkeypatch.setenv("ANTHROPIC_PRICE_MULTIPLIER", "1.1")
@@ -112,6 +126,7 @@ def test_price_overrides_come_from_the_environment(monkeypatch):
 
 
 def test_serper_and_apify_fallback_costs(monkeypatch):
+    """Serper credits and the Apify fallback estimate are priced from the environment settings."""
     assert pricing.serper_cost(3) == pytest.approx(0.003)
     assert pricing.apify_fallback_cost(100) == pytest.approx(0.05)
     monkeypatch.setenv("APIFY_FALLBACK_USD_PER_START", "0.01")
@@ -119,6 +134,7 @@ def test_serper_and_apify_fallback_costs(monkeypatch):
 
 
 def test_cost_run_records_one_row_and_nested_runs_join_it(db):
+    """A run saves one row with the summed Claude, Serper and Apify costs; a nested run joins the outer one."""
     usage = SimpleNamespace(input_tokens=1000, output_tokens=500)
     with cost_tracker.cost_run("outer") as outer:
         with cost_tracker.cost_run("inner") as inner:
@@ -134,6 +150,7 @@ def test_cost_run_records_one_row_and_nested_runs_join_it(db):
 
 
 def test_cost_run_saves_a_failed_run(db):
+    """A run that raises is still saved, with status 'failed'."""
     with pytest.raises(RuntimeError):
         with cost_tracker.cost_run("boom"):
             cost_tracker.record_serper(1)
@@ -143,6 +160,7 @@ def test_cost_run_saves_a_failed_run(db):
 
 
 def test_unpriced_model_and_cached_tokens_are_flagged_not_guessed(db):
+    """An unknown model adds tokens but no cost and a warning; cached tokens also warn."""
     usage = SimpleNamespace(input_tokens=10, output_tokens=5, cache_read_input_tokens=3)
     with cost_tracker.cost_run("warn") as run:
         cost_tracker.record_claude("tagging", "unknown-model", usage)
@@ -152,6 +170,7 @@ def test_unpriced_model_and_cached_tokens_are_flagged_not_guessed(db):
 
 
 def test_calls_outside_a_cost_run_are_ignored():
+    """Recording a cost with no active run does nothing and does not raise."""
     cost_tracker.record_serper(5)            # no active run: silently uncounted, must not raise
     assert cost_tracker.current() is None
 
@@ -163,6 +182,7 @@ def test_calls_outside_a_cost_run_are_ignored():
     ("rigzone.com", "wire_trade"), ("oilprice.com", "aggregator"), ("random-blog.example", "unknown"), (None, "unknown"),
 ])
 def test_source_tier(domain, tier):
+    """Known domains map to their tier; unknown or missing ones are 'unknown'."""
     assert llm_pipeline.source_tier(domain) == tier
 
 
@@ -173,10 +193,12 @@ def test_source_tier(domain, tier):
     ("aggregator", "commentary", 1, 0.52),
 ])
 def test_compute_confidence(tier, ctype, corroboration, expected):
+    """Confidence follows tier, commentary discount, up to two corroborations, and the 1.0 cap."""
     assert llm_pipeline.compute_confidence(tier, ctype, corroboration) == pytest.approx(expected)
 
 
 def test_unknown_source_becomes_verified_only_with_corroboration():
+    """An unknown outlet reaches the verified threshold only with two corroborating sources."""
     from config import VERIFIED_MIN_CONFIDENCE
     assert llm_pipeline.compute_confidence("unknown", "news", 0) < VERIFIED_MIN_CONFIDENCE
     assert llm_pipeline.compute_confidence("unknown", "news", 2) >= VERIFIED_MIN_CONFIDENCE
@@ -192,6 +214,7 @@ def test_unknown_source_becomes_verified_only_with_corroboration():
     ({"url": "https://x.com/a", "title": "Why oil fell"}, "news"),                              # one weak signal only
 ])
 def test_content_type(article, expected):
+    """Commentary is recognised from the URL, section, byline or two title signals; plain news is not."""
     assert llm_pipeline.content_type(article) == expected
 
 
@@ -202,11 +225,13 @@ def test_content_type(article, expected):
     ("Analysts say instructions to refiners were unclear", False),
 ])
 def test_flag_injection(text, flagged):
+    """Instruction-like text is flagged; ordinary headlines are not."""
     assert llm_pipeline.flag_injection({"title": text, "snippet": ""}) is flagged
 
 
 # ---- the network guard ----------------------------------------------------
 
 def test_tests_cannot_open_real_network_connections():
+    """The network guard really blocks a connection to a public address."""
     with pytest.raises(RuntimeError, match="must not open network connections"):
         socket.socket().connect(("93.184.216.34", 80))

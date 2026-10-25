@@ -13,6 +13,7 @@ import config
 
 
 def backend():
+    """'postgres' when DATABASE_URL is set, otherwise 'sqlite'."""
     return "postgres" if config.DATABASE_URL else "sqlite"
 
 
@@ -33,6 +34,7 @@ def pg_ddl(sql):
 
 
 def statements(script):
+    """Split a SQL script into its non-empty statements."""
     return [s.strip() for s in script.split(";") if s.strip()]
 
 
@@ -40,6 +42,7 @@ class Conn:
     """A connection with one calling convention for both backends."""
 
     def __init__(self, raw, kind):
+        """Wrap a raw driver connection of the given kind ('sqlite' or 'postgres')."""
         self.raw, self.kind = raw, kind
 
     def execute(self, sql, params=()):
@@ -49,6 +52,7 @@ class Conn:
         return self.raw.execute(sql, params)
 
     def executemany(self, sql, seq):
+        """Run one statement for many parameter rows; returns the cursor."""
         if self.kind == "postgres":
             cur = self.raw.cursor()
             cur.executemany(sql.replace("%", "%%").replace("?", "%s"), [list(p) for p in seq])
@@ -60,10 +64,12 @@ class Conn:
         self.execute(pg_ddl(sql) if self.kind == "postgres" else sql)
 
     def script(self, text):
+        """Run a multi-statement DDL script, translating each statement for the backend."""
         for stmt in statements(text):
             self.ddl(stmt)
 
     def columns(self, table):
+        """The set of column names of a table (empty if it does not exist)."""
         if self.kind == "postgres":
             rows = self.execute("SELECT column_name AS name FROM information_schema.columns "
                                 "WHERE table_schema = current_schema() AND table_name = ?", (table,))
@@ -72,11 +78,13 @@ class Conn:
         return {r["name"] for r in rows}
 
     def table_exists(self, table):
+        """Whether the table exists."""
         return bool(self.columns(table))
 
 
 @contextmanager
 def connect():
+    """Open a connection to the configured backend; commit on success, roll back on error, always close."""
     if config.DATABASE_URL:
         try:
             import psycopg

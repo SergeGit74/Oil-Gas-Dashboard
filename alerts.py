@@ -24,6 +24,7 @@ def send_slack(text):
 
 
 def send_alert(message, source="alert"):
+    """Report a system problem: log it, print it, record it in job_runs and post it to Slack when configured."""
     log.warning("ALERT [%s] %s", source, message)
     print(f"ALERT [{source}] {message}")
     storage.log_job(f"alert:{source}", "alert", message)

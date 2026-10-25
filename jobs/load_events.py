@@ -7,6 +7,7 @@ import storage
 
 
 def run_load_events():
+    """Load manual and EIA events into the events table and log load_events to job_runs."""
     counts, errors = event_calendar.load_events()
     storage.log_job("load_events", "degraded" if errors else "success",
                     "; ".join(errors) if errors else ", ".join(f"{k}: {v}" for k, v in counts.items()))

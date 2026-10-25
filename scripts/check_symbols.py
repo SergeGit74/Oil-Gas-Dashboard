@@ -22,6 +22,7 @@ DELAY_THRESHOLD_MIN = 15
 
 
 def _providers(names):
+    """Build the requested providers; also return a skip message for each one that is not enabled."""
     out, skipped = [], {}
     for name in names:
         built = market_data.build_providers([name])
@@ -37,6 +38,7 @@ def _providers(names):
 
 
 def check(names=None, indicators=None, providers=None, now=None):
+    """Call each provider once per indicator and report whether the symbol resolves, its price, age and apparent delay."""
     now = now or datetime.now(timezone.utc)
     indicators = indicators or market_data.load_indicators()
     if providers is None:
@@ -71,6 +73,7 @@ def check(names=None, indicators=None, providers=None, now=None):
 
 
 def main():
+    """Parse arguments, run the symbol check, save the report and print a table."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--providers", help="comma-separated, default: PRICE_PROVIDERS")
     args = parser.parse_args()

@@ -18,6 +18,7 @@ _voyage = None
 
 
 def _coll():
+    """The Chroma collection, created on first use."""
     global _collection
     if _collection is None:
         client = chromadb.PersistentClient(path=config.ARCHIVE_DIR)
@@ -26,6 +27,7 @@ def _coll():
 
 
 def _embed(texts, input_type):
+    """Embed texts with Voyage in batches; `input_type` is 'document' or 'query'."""
     global _voyage
     if _voyage is None:
         config.require_keys("VOYAGE_API_KEY")
@@ -37,10 +39,12 @@ def _embed(texts, input_type):
 
 
 def chunk_text(text):
+    """Split text into chunks of at most CHUNK_CHARS (one empty chunk for empty text)."""
     return [text[i:i + CHUNK_CHARS] for i in range(0, len(text), CHUNK_CHARS)] or [""]
 
 
 def _epoch(iso):
+    """An ISO time as epoch seconds (now if it cannot be parsed)."""
     try:
         return datetime.fromisoformat(iso).timestamp()
     except (TypeError, ValueError):

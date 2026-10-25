@@ -24,6 +24,7 @@ def golden_rows():
 
 
 def export_golden_csv(path):
+    """Write all feedback (joined with the model's tags) to a UTF-8 CSV; returns the number of rows."""
     rows = golden_rows()
     with open(path, "w", newline="", encoding="utf-8-sig") as fh:  # BOM so Excel reads UTF-8
         writer = csv.DictWriter(fh, fieldnames=GOLDEN_COLUMNS)

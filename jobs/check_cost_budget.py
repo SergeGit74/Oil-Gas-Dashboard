@@ -7,6 +7,7 @@ import storage
 
 
 def check_cost_budget():
+    """Alert if yesterday's (UTC) total cost exceeded the daily budget; returns whether it did."""
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
     row = next((r for r in storage.daily_costs(days=3) if r["day"] == yesterday), None)
     total = row["total_usd"] if row else 0.0

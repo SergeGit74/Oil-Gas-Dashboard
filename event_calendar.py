@@ -34,18 +34,22 @@ class ScheduleParseError(Exception):
 
 
 def _text(html):
+    """Strip scripts, styles and tags from HTML and collapse whitespace."""
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style).*?</\1>", " ", html))).strip()
 
 
 def _parse_date(s):
+    """Parse a 'Month D, YYYY' date."""
     return datetime.strptime(s, "%B %d, %Y").date()
 
 
 def _parse_time(s):
+    """Convert '10:30 a.m.' to 24-hour 'HH:MM'."""
     return datetime.strptime(s.replace(".", "").upper(), "%I:%M %p").strftime("%H:%M")
 
 
 def _fetch(url):
+    """Download a schedule page and return its visible text."""
     resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     resp.encoding = "utf-8"
@@ -53,6 +57,7 @@ def _fetch(url):
 
 
 def _standard(text, what):
+    """Read the page's own 'standard release time and day' sentence; raise ScheduleParseError if it is absent."""
     m = re.search(r"standard release time and day of the week will be at " + _TIME + r" eastern time on (\w+?)s?\b", text)
     if not m or m.group(2).rstrip("s") not in _WEEKDAYS:
         raise ScheduleParseError(f"{what}: standard release sentence not found")
@@ -115,6 +120,7 @@ def parse_ngs(text, today, horizon=HORIZON_DAYS):
 # ---- manual entries --------------------------------------------------------
 
 def load_yaml_events(path=EVENTS_YAML):
+    """Read the manual events from config/events.yaml as event dicts."""
     if not path.exists():
         return []
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -152,11 +158,13 @@ def load_events(today=None, fetch=_fetch):
 # ---- reading ---------------------------------------------------------------
 
 def format_event(e):
+    """One line for an event: date, time and timezone (or 'time not stated'), title and category."""
     when = f"{e['date']} {e['time']} {e['tz']}" if e["time"] else f"{e['date']} (time not stated)"
     return f"{when} - {e['title']}" + (f" [{e['category']}]" if e["category"] else "")
 
 
 def events_text(events):
+    """The events as newline-separated lines (used in the brief prompt)."""
     return "\n".join(format_event(e) for e in events)
 
 

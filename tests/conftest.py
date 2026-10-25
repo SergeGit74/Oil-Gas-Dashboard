@@ -33,9 +33,11 @@ import storage  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
+    """Autouse: make any non-loopback socket connection raise, so an unmocked network call fails the test."""
     real_connect = socket.socket.connect
 
     def guarded_connect(self, address, *args, **kwargs):
+        """Allow loopback addresses (asyncio, Streamlit, local PostgreSQL) and refuse everything else."""
         host = address[0] if isinstance(address, tuple) else address
         if host not in ("127.0.0.1", "::1", "localhost"):  # loopback: asyncio, Streamlit's test runner, local Postgres
             raise RuntimeError(f"tests must not open network connections (tried {host}); mock the HTTP call")
@@ -66,6 +68,7 @@ def pg_url():
 
 
 def _reset_postgres(url):
+    """Drop and recreate the public schema so a PostgreSQL test starts empty."""
     import psycopg
 
     with psycopg.connect(url, autocommit=True) as conn:

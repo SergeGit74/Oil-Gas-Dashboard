@@ -11,6 +11,7 @@ DEFAULT_MODEL_PRICES = {
 
 
 def _f(name, default):
+    """A float from the environment, with a default."""
     return float(os.getenv(name, default))
 
 
@@ -28,8 +29,10 @@ def claude_cost(model, input_tokens, output_tokens):
 
 
 def serper_cost(credits):
+    """USD cost of Serper credits."""
     return credits * _f("SERPER_USD_PER_CREDIT", 0.001)
 
 
 def apify_fallback_cost(n_results):
+    """Estimated USD cost of an Apify run from its result count, used when usage is not reported."""
     return n_results * _f("APIFY_FALLBACK_USD_PER_RESULT", 0.0005) + _f("APIFY_FALLBACK_USD_PER_START", 0)

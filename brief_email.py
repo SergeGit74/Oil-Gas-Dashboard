@@ -47,6 +47,7 @@ def parse_addresses(raw):
 
 
 def recipients():
+    """Valid addresses in EMAIL_TO."""
     return parse_addresses(config.get("EMAIL_TO"))
 
 
@@ -57,6 +58,7 @@ def owner_address():
 
 
 def sender_address():
+    """The validated EMAIL_FROM address, or None."""
     addrs = parse_addresses(config.get("EMAIL_FROM"))
     return addrs[0] if addrs else None
 
@@ -64,12 +66,14 @@ def sender_address():
 # ---- content --------------------------------------------------------------
 
 def _local_time(iso):
+    """An ISO time as 'YYYY-MM-DD HH:MM UTC (HH:MM <desk timezone>)'."""
     utc = datetime.fromisoformat(iso).astimezone(timezone.utc)
     desk = utc.astimezone(ZoneInfo(config.DESK_TIMEZONE))
     return f"{utc:%Y-%m-%d %H:%M} UTC ({desk:%H:%M} {config.DESK_TIMEZONE})"
 
 
 def _price_lines(key_points):
+    """One text line per indicator from the brief's stored price snapshot."""
     prices = (key_points or {}).get("prices") or {}
     lines = []
     for key, p in prices.items():
@@ -79,6 +83,7 @@ def _price_lines(key_points):
 
 
 def _source_lines(sources):
+    """One '[n] title - outlet - url' line per numbered source."""
     return [f"[{s['n']}] {s['title']} - {s['source']}" + (f" - {s['url']}" if s.get("url") else "") for s in sources]
 
 
@@ -151,6 +156,7 @@ def build_review_notice(brief, owner, sender=None):
 
 
 def _message(subject, to_addrs, plain, html_body, sender=None):
+    """Assemble an EmailMessage with a sanitized subject, a plain-text body and an HTML alternative."""
     sender = sender or sender_address()
     if not sender or not to_addrs:
         raise EmailError("EMAIL_FROM and at least one valid recipient are required")
@@ -167,6 +173,7 @@ def _message(subject, to_addrs, plain, html_body, sender=None):
 # ---- delivery -------------------------------------------------------------
 
 def check_smtp_settings():
+    """Raise EmailError if a required SMTP/addressing setting is missing."""
     missing = [n for n in ("SMTP_HOST", "EMAIL_FROM", "EMAIL_TO") if not config.get(n)]
     if missing:
         raise EmailError(f"Missing settings in .env: {', '.join(missing)}")
@@ -203,6 +210,7 @@ def smtp_send(msg, to_addrs):
 
 
 def write_eml(msg, outbox_dir, name):
+    """Write a message to <outbox_dir>/<name>.eml (dry-run preview) and return the path."""
     outbox_dir.mkdir(parents=True, exist_ok=True)
     path = outbox_dir / f"{re.sub(r'[^A-Za-z0-9_.-]', '_', name)}.eml"
     path.write_bytes(bytes(msg))

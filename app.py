@@ -37,6 +37,7 @@ def _install_refresher(interval_seconds, only_if_new_data):
 
     @st.fragment(run_every=interval_seconds)
     def _refresher():
+        """Timed fragment: after the first skipped tick, re-run the whole page (only if a new run finished, when asked to)."""
         if not st.session_state.get("refresher_armed"):
             st.session_state["refresher_armed"] = True
             return
@@ -89,11 +90,13 @@ PRICE_REFRESH = "60s"
 
 
 def _fmt_price(value, decimals):
+    """Format a price with thousands separators and the indicator's number of decimals."""
     return f"{value:,.{decimals}f}"
 
 
 @st.fragment(run_every=PRICE_REFRESH)
 def price_panel():
+    """Render the market-price tiles, the spread and ratio, and 24-hour charts from stored ticks (refreshes every 60 s)."""
     st.subheader("Market prices")
     indicators = market_data.load_indicators()
     ticks = storage.latest_ticks()

@@ -29,6 +29,7 @@ class MarketStatus:
 
 
 def get_calendar(code):
+    """Load (and cache) an exchange calendar by code, extended two years ahead."""
     if code not in _CALENDARS:
         import exchange_calendars as xc
 
@@ -38,10 +39,12 @@ def get_calendar(code):
 
 
 def _iso(ts):
+    """A timestamp as a UTC ISO string."""
     return ts.tz_convert("UTC").isoformat(timespec="seconds")
 
 
 def _indicator(indicator):
+    """The config entry for an indicator key (or the entry itself if one is passed)."""
     return indicator if isinstance(indicator, dict) else market_data.load_indicators()[indicator]
 
 

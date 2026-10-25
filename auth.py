@@ -20,6 +20,7 @@ class LoginLimiter:
     """After `max_attempts` failures within `lockout_s` seconds, refuse all logins for `lockout_s` seconds."""
 
     def __init__(self, clock=time.monotonic):
+        """Create a limiter with an injectable clock (tests pass a fake one)."""
         self.clock = clock
         self.lock = threading.Lock()
         self.failures = []
@@ -31,6 +32,7 @@ class LoginLimiter:
             return max(0.0, self.locked_until - self.clock())
 
     def record_failure(self, max_attempts, lockout_s):
+        """Count a failed login; once max_attempts fall inside the window, start a lockout. Returns the failures still counted."""
         with self.lock:
             now = self.clock()
             self.failures = [t for t in self.failures if now - t < lockout_s] + [now]
@@ -40,6 +42,7 @@ class LoginLimiter:
             return len(self.failures)
 
     def record_success(self):
+        """Forget earlier failed attempts after a correct password."""
         with self.lock:
             self.failures = []
 
@@ -49,6 +52,7 @@ _LIMITER = LoginLimiter()  # module state: shared by every session of the server
 
 
 def reset_limiter():
+    """Replace the shared limiter with a fresh one (used by tests)."""
     global _LIMITER
     _LIMITER = LoginLimiter()
 

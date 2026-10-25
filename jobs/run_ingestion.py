@@ -7,6 +7,7 @@ import storage
 
 
 def run_ingestion():
+    """Embed verified articles not yet indexed into the vector store; returns how many."""
     articles = storage.unindexed_verified()
     if not articles:
         storage.log_job("run_ingestion", "skipped", "nothing to index")

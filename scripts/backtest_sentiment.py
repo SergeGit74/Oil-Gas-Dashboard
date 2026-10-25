@@ -16,6 +16,7 @@ REPORT_PATH = Path(__file__).resolve().parent.parent / "reports" / "backtest.jso
 
 
 def main():
+    """Run the backtest, save reports/backtest.json and print the results."""
     report = backtest.run_backtest()
     REPORT_PATH.parent.mkdir(exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, indent=2), encoding="utf-8")

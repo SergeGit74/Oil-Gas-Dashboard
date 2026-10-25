@@ -8,6 +8,7 @@ _client = None
 
 
 def _get_client():
+    """The shared Anthropic client, created on first use (sending the workspace id header if set)."""
     global _client
     if _client is None:
         config.require_keys("ANTHROPIC_API_KEY")
@@ -36,4 +37,5 @@ def tool_input(response, tool_name):
 
 
 def text_of(response):
+    """The concatenated text blocks of a response."""
     return "".join(b.text for b in response.content if b.type == "text").strip()

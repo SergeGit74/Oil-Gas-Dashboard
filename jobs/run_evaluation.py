@@ -17,6 +17,7 @@ BRIEF_MAX_SOURCES = 40
 
 
 def eia_context_text(eia):
+    """Text of the latest EIA figures, each with its own date, for the brief prompt and the evaluator."""
     lines = []
     for name, label in (("brent", "Brent spot USD/bbl"), ("wti", "WTI spot USD/bbl"),
                         ("crude_stocks", "US crude stocks (thousand bbl)")):
@@ -33,6 +34,8 @@ def eia_context_text(eia):
 
 
 def run_evaluation():
+    """Generate today's brief from verified articles, evaluate it, save it as published or flagged, and return the status (None
+    if there was nothing to brief)."""
     articles = [a for a in storage.verified_articles(storage.hours_ago(24), limit=BRIEF_MAX_SOURCES)
                 if a["content_type"] != "commentary"]
     today = storage.utcnow()[:10]

@@ -13,9 +13,11 @@ T0 = datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)
 # ---- claim_daily_run ------------------------------------------------------
 
 def test_two_concurrent_claimers_only_one_wins(db):
+    """Eight threads claim the same job at once; exactly one succeeds."""
     results, barrier = [], threading.Barrier(8)
 
     def claimer():
+        """Thread body: wait at the barrier, then try to claim."""
         barrier.wait()
         results.append(storage.claim_daily_run("brief", DAY, max_attempts=1, cooldown_min=30, now=T0))
 
@@ -26,6 +28,7 @@ def test_two_concurrent_claimers_only_one_wins(db):
 
 
 def test_attempt_cap_and_cooldown_respected(db):
+    """A second claim is refused during the cooldown, allowed after it, and refused once the cap is reached."""
     assert storage.claim_daily_run("brief", DAY, 2, 30, now=T0)
     assert not storage.claim_daily_run("brief", DAY, 2, 30, now=T0 + timedelta(minutes=10))  # cooldown
     assert storage.claim_daily_run("brief", DAY, 2, 30, now=T0 + timedelta(minutes=31))      # second attempt
@@ -33,6 +36,7 @@ def test_attempt_cap_and_cooldown_respected(db):
 
 
 def test_claims_are_per_job_and_per_day(db):
+    """A claim on one job or day does not block another."""
     assert storage.claim_daily_run("brief", DAY, 1, 30, now=T0)
     assert storage.claim_daily_run("brief_email", DAY, 1, 30, now=T0)
     assert storage.claim_daily_run("brief", "2026-10-27", 1, 30, now=T0)
@@ -41,10 +45,12 @@ def test_claims_are_per_job_and_per_day(db):
 # ---- catch_up_brief -------------------------------------------------------
 
 def _at(hour, minute=0):
+    """A time on the test day in the Dubai timezone."""
     return datetime(2026, 10, 26, hour, minute, tzinfo=ZoneInfo("Asia/Dubai"))
 
 
 def _setup(monkeypatch, calls, verified=True, status="published"):
+    """Stub out the pipeline pieces the catch-up calls and record which ones ran."""
     monkeypatch.setattr(scheduler, "_brief_day", lambda: DAY)
     monkeypatch.setattr(scheduler.storage, "verified_articles", lambda *a, **k: [{"id": 1}] if verified else [])
     monkeypatch.setattr(scheduler, "run_evaluation", lambda: calls.append("eval") or status)
@@ -52,6 +58,7 @@ def _setup(monkeypatch, calls, verified=True, status="published"):
 
 
 def test_no_brief_runs_after_catchup_time(db, monkeypatch):
+    """With no brief for today and the catch-up time passed, the brief is generated."""
     calls = []
     _setup(monkeypatch, calls)
     assert scheduler.catch_up_brief(now=_at(6, 5)) == "published"
@@ -59,6 +66,7 @@ def test_no_brief_runs_after_catchup_time(db, monkeypatch):
 
 
 def test_before_catchup_time_does_nothing(db, monkeypatch):
+    """Before the catch-up time nothing runs."""
     calls = []
     _setup(monkeypatch, calls)
     assert scheduler.catch_up_brief(now=_at(5, 59)) is None
@@ -66,6 +74,7 @@ def test_before_catchup_time_does_nothing(db, monkeypatch):
 
 
 def test_published_brief_counts_as_happened(db, monkeypatch):
+    """A published brief means the morning run happened."""
     calls = []
     _setup(monkeypatch, calls)
     storage.save_brief(DAY, "published", 0.95, "text", {})
@@ -74,6 +83,7 @@ def test_published_brief_counts_as_happened(db, monkeypatch):
 
 
 def test_flagged_brief_counts_as_happened(db, monkeypatch):
+    """A brief flagged for review also counts, so it is not regenerated."""
     calls = []
     _setup(monkeypatch, calls)
     storage.save_brief(DAY, "flagged_for_review", 0.5, "text", {"reasons": ["x"]})
@@ -82,6 +92,7 @@ def test_flagged_brief_counts_as_happened(db, monkeypatch):
 
 
 def test_failing_run_is_retried_at_most_twice_a_day(db, monkeypatch):
+    """A run that produces no brief is retried once after the cooldown, then not again."""
     calls = []
     _setup(monkeypatch, calls, status=None)  # run_evaluation produces no brief
     clock = {"now": T0}
@@ -95,6 +106,7 @@ def test_failing_run_is_retried_at_most_twice_a_day(db, monkeypatch):
 
 
 def test_no_verified_articles_spends_no_attempt(db, monkeypatch):
+    """With nothing to brief, the catch-up does not use up a claim attempt."""
     calls = []
     _setup(monkeypatch, calls, verified=False)
     assert scheduler.catch_up_brief(now=_at(7)) is None

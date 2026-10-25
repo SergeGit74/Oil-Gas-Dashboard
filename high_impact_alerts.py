@@ -27,12 +27,14 @@ def slack_escape(text):
 
 
 def is_alertable(article):
+    """Whether an article is verified, direction-tagged and at or above the alert magnitude."""
     return (not article.get("flagged_injection") and article.get("direction")
             and (article.get("confidence") or 0) >= config.VERIFIED_MIN_CONFIDENCE
             and (article.get("magnitude") or 0) >= config.ALERT_MIN_MAGNITUDE)
 
 
 def cluster_key(article):
+    """The dedupe key for a story: its cluster, or the article itself when it has none."""
     return f"cluster:{article['cluster_id']}" if article.get("cluster_id") else f"article:{article['id']}"
 
 
@@ -46,6 +48,7 @@ def verified_outlets(article):
 
 
 def format_message(article, outlets):
+    """Build the Slack text for a story, with Slack markup in scraped text escaped."""
     level = "High" if article["confidence"] >= 0.8 else "Medium"
     outlet_text = "1 outlet" if outlets == 1 else f"{outlets} outlets"
     url = article.get("url") or ""

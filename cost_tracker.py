@@ -11,6 +11,7 @@ _current = contextvars.ContextVar("current_run", default=None)
 
 class RunCost:
     def __init__(self, job_name):
+        """Start an empty cost record for one scheduler run."""
         self.job_name = job_name
         self.started_at = storage.utcnow()
         self.claude_usd = 0.0
@@ -24,16 +25,20 @@ class RunCost:
         self.warnings = []
 
     def _step(self, name):
+        """The per-step totals dict for `name`, created on first use."""
         return self.steps.setdefault(name, {"usd": 0.0, "calls": 0})
 
 
 def current():
+    """The cost run active in this context, or None."""
     return _current.get()
 
 
 @contextmanager
 def cost_run(job_name):
     # A nested cost_run joins the outer run so scheduler cycles produce exactly one record.
+    """Collect all costs recorded inside the block and save one run_costs row, even if the block raises; nested runs join the
+    outer one."""
     outer = _current.get()
     if outer is not None:
         yield outer
@@ -60,18 +65,21 @@ def cost_run(job_name):
 
 
 def warn(message):
+    """Attach a de-duplicated warning to the active run (ignored outside a run)."""
     run = _current.get()
     if run is not None and message not in run.warnings:
         run.warnings.append(message)
 
 
 def incr(counter, amount=1):
+    """Add to a named counter on the active run (ignored outside a run)."""
     run = _current.get()
     if run is not None:
         run.counters[counter] = run.counters.get(counter, 0) + amount
 
 
 def record_claude(step, model, usage):
+    """Record a Claude call's token usage and price it; an unknown model is tracked as unpriced, not guessed."""
     run = _current.get()
     if run is None:
         return
@@ -96,6 +104,7 @@ def record_claude(step, model, usage):
 
 
 def record_serper(credits, step="serper_corroboration"):
+    """Record Serper credits and their cost against the active run."""
     run = _current.get()
     if run is None:
         return
@@ -109,6 +118,7 @@ def record_serper(credits, step="serper_corroboration"):
 
 
 def record_apify(run_id, usd, estimated, status):
+    """Record one Apify run's cost (reported or estimated) and status against the active run."""
     run = _current.get()
     if run is None:
         return

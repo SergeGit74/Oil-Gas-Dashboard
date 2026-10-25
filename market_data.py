@@ -46,23 +46,28 @@ class Quote:
 # ---- configuration --------------------------------------------------------
 
 def load_indicators(path=None):
+    """The indicator definitions from config/market_symbols.json."""
     with open(path or config.MARKET_SYMBOLS_PATH, encoding="utf-8") as fh:
         return json.load(fh)["indicators"]
 
 
 def _iso(dt):
+    """A datetime as a UTC ISO string."""
     return dt.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 def _change_pct(price, prev):
+    """Percent change from the previous close, or None without one."""
     return round((price - prev) / prev * 100, 4) if prev else None
 
 
 def _valid(price):
+    """Whether a price is a positive, finite number."""
     return isinstance(price, (int, float)) and math.isfinite(price) and price > 0
 
 
 def _num(value):
+    """A float from a value, or None if it cannot be converted."""
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -70,6 +75,7 @@ def _num(value):
 
 
 def _make_quote(key, cfg, provider, price, prev, as_of_dt, delayed=None, currency=None):
+    """Build a Quote after validating the price, or None if the price or time is unusable."""
     price, prev = _num(price), _num(prev)
     if not _valid(price) or as_of_dt is None:
         return None
@@ -82,6 +88,7 @@ def _make_quote(key, cfg, provider, price, prev, as_of_dt, delayed=None, currenc
 # ---- trading windows ------------------------------------------------------
 
 def _week_minute(spec):
+    """A 'Sun 18:00' style spec as minutes since Monday 00:00."""
     day, hhmm = spec.split()
     h, m = hhmm.split(":")
     return _DAYS[day] * 1440 + int(h) * 60 + int(m)
@@ -110,10 +117,12 @@ class TwelveDataProvider:
     name = "twelvedata"
 
     def __init__(self, api_key):
+        """Keep the API key and start with no recorded errors."""
         self.api_key = api_key
         self.last_errors = {}
 
     def supports(self, key, cfg):
+        """Whether the indicator has a Twelve Data symbol."""
         return bool(cfg["symbols"].get(self.name))
 
     def fetch_quotes(self, indicators):
@@ -151,12 +160,15 @@ class YahooProvider:
     name = "yahoo"
 
     def __init__(self):
+        """Start with no recorded errors."""
         self.last_errors = {}
 
     def supports(self, key, cfg):
+        """Whether the indicator has a Yahoo symbol."""
         return bool(cfg["symbols"].get(self.name))
 
     def fetch_quotes(self, indicators):
+        """Fetch one chart request per indicator from Yahoo's unofficial endpoint; failures go to last_errors."""
         self.last_errors = {}
         quotes = []
         for key, cfg in indicators.items():
@@ -196,12 +208,15 @@ class EiaProvider:
     name = "eia"
 
     def __init__(self):
+        """Start with no recorded errors."""
         self.last_errors = {}
 
     def supports(self, key, cfg):
+        """Whether the indicator maps to an EIA daily spot series."""
         return cfg["symbols"].get(self.name) in data_sources.EIA_SERIES
 
     def fetch_quotes(self, indicators):
+        """Fetch the latest two daily EIA observations per indicator; failures go to last_errors."""
         self.last_errors = {}
         quotes = []
         for key, cfg in indicators.items():
@@ -242,6 +257,7 @@ class QuotaManager:
     """Daily cap (a fraction of the provider's limit, kept in the database) and per-minute pacing (in memory)."""
 
     def __init__(self, limits=None, clock=None, sleep=time.sleep, monotonic=time.monotonic):
+        """Set the provider limits and the clock, sleep and monotonic functions (injectable for tests)."""
         self.limits = limits or config.PROVIDER_LIMITS
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.sleep = sleep
@@ -249,9 +265,11 @@ class QuotaManager:
         self._events = {}
 
     def daily_cap(self, provider):
+        """The most credits allowed per day for a provider: the safety fraction of its daily limit."""
         return int(self.limits[provider][1] * config.QUOTA_SAFETY_FRACTION)
 
     def per_minute(self, provider):
+        """A provider's per-minute credit limit."""
         return self.limits[provider][0]
 
     def reserve(self, provider, credits):
@@ -298,6 +316,7 @@ def budget_floor_minutes(assignment, limits=None):
 
 
 def interval_minutes(cfg, now, floor=0.0):
+    """Polling interval for an instrument: fast while its market is open, slow otherwise, never below `floor`."""
     import market_calendar  # imported here: market_calendar itself imports this module
 
     open_now = market_calendar.market_status(cfg, now).status == "open"  # closed and holiday poll at the slow rate
@@ -315,6 +334,7 @@ def derived_metrics(ticks):
     spread also needs both quotes from the same provider, so it compares like with like. No TTF/Henry Hub spread:
     that needs currency and unit conversion, which is not implemented."""
     def pair(a, b, same_provider):
+        """The two latest ticks if both exist, are within 24 h of each other and (optionally) share a provider."""
         ta, tb = ticks.get(a), ticks.get(b)
         if not ta or not tb:
             return None

@@ -15,6 +15,7 @@ DEFAULT_PATH = Path(__file__).resolve().parent.parent / "reports" / "golden_set.
 
 
 def main():
+    """Write the feedback golden-set CSV to the given path (default reports/golden_set.csv)."""
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PATH
     path.parent.mkdir(exist_ok=True)
     print(f"Wrote {feedback_tools.export_golden_csv(path)} feedback rows to {path}")

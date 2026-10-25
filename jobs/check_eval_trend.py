@@ -11,6 +11,7 @@ DRIFT_DROP = 0.10
 
 
 def check_eval_trend():
+    """Alert if recent brief groundedness is low or has dropped sharply; returns whether it alerted."""
     if not os.path.exists(config.EVAL_HISTORY_PATH):
         return False
     with open(config.EVAL_HISTORY_PATH, encoding="utf-8") as f:

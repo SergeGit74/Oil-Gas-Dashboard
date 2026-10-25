@@ -18,24 +18,28 @@ APP = str(Path(__file__).resolve().parent.parent / "app.py")
 
 
 def utc(*args):
+    """A timezone-aware UTC datetime."""
     return datetime(*args, tzinfo=timezone.utc)
 
 
 # ---- market_status --------------------------------------------------------
 
 def test_market_status_normal_weekday_is_open():
+    """On a Tuesday midday the markets are open."""
     now = utc(2026, 10, 27, 14, 0)  # Tuesday 10:00 New York
     assert {k: market_calendar.market_status(k, now).status for k in ("BRENT", "WTI", "TTF", "SPX", "GOLD")} == \
            {k: "open" for k in ("BRENT", "WTI", "TTF", "SPX", "GOLD")}
 
 
 def test_market_status_weekend_is_closed_not_holiday():
+    """On a Saturday a market is closed (not a holiday), with the last close and next open given."""
     s = market_calendar.market_status("WTI", utc(2026, 10, 24, 14, 0))  # Saturday
     assert s.status == "closed"
     assert s.last_close.startswith("2026-10-23") and s.next_open.startswith("2026-10-25")  # Sunday evening open
 
 
 def test_market_status_holiday():
+    """Christmas Day and US Thanksgiving are holidays for the relevant exchanges."""
     xmas = utc(2026, 12, 25, 14, 0)  # a Friday
     assert market_calendar.market_status("WTI", xmas).status == "holiday"
     assert market_calendar.market_status("SPX", xmas).status == "holiday"
@@ -44,11 +48,13 @@ def test_market_status_holiday():
 
 
 def test_market_status_outside_session_hours_on_a_trading_day():
+    """After the US close the stock index is closed, not on holiday."""
     s = market_calendar.market_status("SPX", utc(2026, 10, 27, 22, 0))  # after the US close
     assert s.status == "closed" and s.last_close.startswith("2026-10-27")
 
 
 def test_market_status_falls_back_to_window_without_calendar():
+    """Without a calendar code the approximate window decides, with a note."""
     cfg = {**market_data.load_indicators()["BRENT"], "calendar": None}
     s = market_calendar.market_status(cfg, utc(2026, 10, 27, 14, 0))
     assert s.status == "open" and "approximate" in s.note
@@ -56,12 +62,14 @@ def test_market_status_falls_back_to_window_without_calendar():
 
 
 def test_status_line_lists_closed_markets_with_last_close():
+    """The brief's market-status line names closed markets and their last close."""
     line = market_calendar.status_line(utc(2026, 10, 25, 12, 0))  # Sunday
     assert line.startswith("Market status at 25 Oct 2026 12:00 UTC")
     assert "open - none" in line and "BRENT (last close 23 Oct)" in line
 
 
 def test_holiday_polls_at_the_slow_rate():
+    """A holiday is polled at the off-hours interval."""
     cfg = market_data.load_indicators()["WTI"]
     assert market_data.interval_minutes(cfg, utc(2026, 10, 27, 14, 0)) == config.PRICE_POLL_INTERVAL_MIN
     assert market_data.interval_minutes(cfg, utc(2026, 12, 25, 14, 0)) == config.PRICE_POLL_OFFHOURS_INTERVAL_MIN
@@ -70,10 +78,12 @@ def test_holiday_polls_at_the_slow_rate():
 # ---- derived values -------------------------------------------------------
 
 def tick(key, price, ts, provider="yahoo"):
+    """A minimal tick dict."""
     return {"indicator_key": key, "price": price, "ts": ts, "provider": provider}
 
 
 def test_derived_metrics():
+    """The Brent-WTI spread and gold/Brent ratio are computed from fresh ticks."""
     t = "2026-10-27T14:00:00+00:00"
     out = market_data.derived_metrics({"BRENT": tick("BRENT", 80.0, t), "WTI": tick("WTI", 76.5, t),
                                        "GOLD": tick("GOLD", 4000.0, t, "twelvedata")})
@@ -82,6 +92,7 @@ def test_derived_metrics():
 
 
 def test_derived_metrics_refuse_stale_or_mixed_inputs():
+    """Quotes more than a day apart, or from different providers for the spread, give no value."""
     t = "2026-10-27T14:00:00+00:00"
     old = "2026-10-20T14:00:00+00:00"
     assert market_data.derived_metrics({"BRENT": tick("BRENT", 80, t), "WTI": tick("WTI", 76, old)}) \
@@ -94,6 +105,7 @@ def test_derived_metrics_refuse_stale_or_mixed_inputs():
 # ---- EIA weekly -----------------------------------------------------------
 
 def test_refresh_eia_weekly_stores_and_is_gated(db, monkeypatch):
+    """Weekly series are fetched and stored once, then skipped while recent."""
     monkeypatch.setenv("EIA_API_KEY", "test")
     calls = []
     monkeypatch.setattr(data_sources, "_eia_series",
@@ -107,12 +119,14 @@ def test_refresh_eia_weekly_stores_and_is_gated(db, monkeypatch):
 
 
 def test_refresh_eia_weekly_without_key_is_degraded(db, monkeypatch):
+    """Without an EIA key the weekly fetch logs 'degraded'."""
     monkeypatch.setenv("EIA_API_KEY", "")
     assert data_sources.refresh_eia_weekly() is False
     assert storage.recent_job_runs("fetch_eia_weekly", 1)[0]["status"] == "degraded"
 
 
 def test_eia_context_text_includes_weekly_series_with_dates(db):
+    """The EIA context text includes the weekly series, each with its date."""
     storage.save_eia_weekly("distillate_stocks", [("2026-10-16", 104286.0), ("2026-10-09", 102611.0)], "thousand bbl")
     storage.save_eia_weekly("gas_storage", [("2026-10-16", 3644.0)], "Bcf")
     text = run_evaluation.eia_context_text({"brent": [("2026-10-20", 115.22)]})
@@ -136,6 +150,7 @@ NGS_TEXT = ("Weekly Natural Gas Storage Report Schedule Holiday Release Schedule
 
 
 def test_parse_wpsr_standard_wednesdays_and_moved_week():
+    """Wednesdays are generated at the page's standard time, and a holiday week moves to its alternate date."""
     rows = event_calendar.parse_wpsr(WPSR_TEXT, date(2026, 11, 1), horizon=21)
     got = {(r["date"], r["time"]) for r in rows}
     assert ("2026-11-04", "10:30") in got and ("2026-11-18", "10:30") in got
@@ -145,6 +160,7 @@ def test_parse_wpsr_standard_wednesdays_and_moved_week():
 
 
 def test_parse_ngs_standard_thursdays_and_displaced_weeks():
+    """Thursdays are generated, and a holiday week uses the alternate day instead."""
     got = {(r["date"], r["time"]) for r in event_calendar.parse_ngs(NGS_TEXT, date(2026, 11, 1), horizon=30)}
     assert ("2026-11-05", "10:30") in got and ("2026-11-19", "10:30") in got
     assert ("2026-11-12", "10:30") not in got and ("2026-11-13", "10:30") in got      # Friday replaces Thursday
@@ -152,15 +168,18 @@ def test_parse_ngs_standard_thursdays_and_displaced_weeks():
 
 
 def test_parser_refuses_a_page_without_the_standard_sentence():
+    """A page missing the standard-release sentence raises instead of guessing."""
     with pytest.raises(event_calendar.ScheduleParseError):
         event_calendar.parse_wpsr("Release Schedule October 10, 2025 October 16, 2025 Thursday 12:00 p.m.", date(2026, 1, 1))
 
 
 def test_load_events_is_idempotent_and_a_failed_page_keeps_old_rows(db):
+    """Loading twice adds no duplicates; a page that fails to parse leaves its old rows alone."""
     pages = {event_calendar.WPSR_URL: WPSR_TEXT, event_calendar.NGS_URL: NGS_TEXT}
     counts, errors = event_calendar.load_events(today=date(2026, 11, 1), fetch=pages.__getitem__)
     assert errors == [] and counts["manual"] > 0 and counts["eia_wpsr"] > 0
     def snapshot():  # ids change when a source's rows are regenerated, so compare the content only
+        """The stored events without their ids (ids change when rows are regenerated)."""
         return [{k: v for k, v in e.items() if k != "id"} for e in storage.events_between("2026-11-01", "2027-12-31")]
 
     before = snapshot()
@@ -168,6 +187,7 @@ def test_load_events_is_idempotent_and_a_failed_page_keeps_old_rows(db):
     assert snapshot() == before                                                   # no duplicates
 
     def broken(url):
+        """Fake fetch: a layout-changed petroleum page, a normal gas page."""
         return "layout changed" if url == event_calendar.WPSR_URL else NGS_TEXT
 
     _, errors = event_calendar.load_events(today=date(2026, 11, 1), fetch=broken)
@@ -178,12 +198,14 @@ def test_load_events_is_idempotent_and_a_failed_page_keeps_old_rows(db):
 # ---- brief prompt ---------------------------------------------------------
 
 def _capture_prompt(monkeypatch):
+    """Replace the Claude call to capture the prompt sent for the brief."""
     seen = {}
 
     class Resp:
         pass
 
     def fake_create(step, system, messages, max_tokens):
+        """Fake create_message: save the system and user prompts."""
         seen["system"], seen["user"] = system, messages[0]["content"]
         return Resp()
 
@@ -197,6 +219,7 @@ ART = [{"title": "t", "source": "s", "direction": "Bullish", "magnitude": 4, "sn
 
 
 def test_brief_prompt_contains_only_events_from_the_table(db, monkeypatch):
+    """The brief prompt lists only table events inside the window, and tells the model to add none."""
     seen = _capture_prompt(monkeypatch)
     storage.upsert_events([
         {"date": "2026-10-28", "time": "10:30", "tz": "America/New_York", "title": "Table event A", "category": "x"},
@@ -214,6 +237,7 @@ def test_brief_prompt_contains_only_events_from_the_table(db, monkeypatch):
 
 
 def test_brief_prompt_says_none_when_the_table_is_empty(db, monkeypatch):
+    """With no events the prompt says 'none'."""
     seen = _capture_prompt(monkeypatch)
     llm_pipeline.generate_brief(ART, SENT, "eia", brief_date=date(2026, 10, 28),
                                 events_text=event_calendar.events_text(event_calendar.brief_events(date(2026, 10, 28))))
@@ -221,6 +245,7 @@ def test_brief_prompt_says_none_when_the_table_is_empty(db, monkeypatch):
 
 
 def test_run_evaluation_passes_market_status_and_table_events(db, monkeypatch):
+    """run_evaluation gives the generator and the evaluator the market status and the table's events."""
     storage.upsert_events([{"date": storage.utcnow()[:10], "time": "10:30", "tz": "America/New_York",
                             "title": "Only this event", "category": "x"}])
     storage.save_articles([{"url": "u1", "title": "Oil rises", "source": "reuters.com", "snippet": "x",
@@ -233,6 +258,7 @@ def test_run_evaluation_passes_market_status_and_table_events(db, monkeypatch):
     monkeypatch.setattr(run_evaluation.rag_pipeline, "history_context", lambda q: "")
 
     def fake_generate(articles, sentiment, eia, history, brief_date, market_status, events_text, **kwargs):
+        """Fake generate_brief: capture the market status and events text."""
         seen.update(market_status=market_status, events_text=events_text)
         return "# t\n\nbody"
 
@@ -248,11 +274,13 @@ def test_run_evaluation_passes_market_status_and_table_events(db, monkeypatch):
 # ---- freshness ------------------------------------------------------------
 
 def test_level_thresholds():
+    """Ages map to ok, amber, red and unknown at the thresholds."""
     assert freshness.level_for(None, 10, 20) == "unknown"
     assert [freshness.level_for(a, 10, 20) for a in (5, 10, 19, 20, 90)] == ["ok", "amber", "amber", "red", "red"]
 
 
 def test_collection_freshness_reads_job_runs(db):
+    """Collection freshness comes from the last successful fetch in job_runs."""
     now = datetime.now(timezone.utc)
     assert freshness.collection_freshness(now).level == "unknown"
     storage.log_job("fetch_gdelt", "success", "x")
@@ -262,6 +290,7 @@ def test_collection_freshness_reads_job_runs(db):
 
 
 def test_price_freshness_only_judged_while_a_market_is_open(db):
+    """An old price fetch is red while markets are open but fine when they are all closed."""
     storage.save_ticks([{"indicator_key": "BRENT", "ts": "2026-10-27T10:00:00+00:00", "price": 80.0,
                          "provider": "yahoo", "fetched_at": "2026-10-27T10:00:00+00:00"}])
     open_now = utc(2026, 10, 27, 14, 0)             # four hours later, markets open
@@ -274,6 +303,7 @@ def test_price_freshness_only_judged_while_a_market_is_open(db):
 
 def test_brief_freshness_states(db, monkeypatch):
     # 02:30 UTC = 06:30 Dubai: past the 06:00 catch-up time with no brief
+    """The brief indicator is ok before the catch-up time, amber then red after it, and ok once a brief exists."""
     late = utc(2026, 10, 27, 2, 30)
     assert freshness.brief_freshness(late).level == "amber"
     assert freshness.brief_freshness(utc(2026, 10, 27, 5, 30)).level == "red"
@@ -285,6 +315,7 @@ def test_brief_freshness_states(db, monkeypatch):
 # ---- dashboard ------------------------------------------------------------
 
 def test_dashboard_renders_phase2_panels(db):
+    """The spread tile, EIA weekly values and events table render from stored data."""
     now = storage.utcnow()
     storage.save_ticks([
         {"indicator_key": k, "ts": now, "price": p, "prev_close": p - 1, "change_pct": 1.0, "provider": "yahoo",

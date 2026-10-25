@@ -20,25 +20,30 @@ class Freshness:
 
     @property
     def colored(self):
+        """The text wrapped in Streamlit color markup for its level."""
         color = {"ok": "green", "amber": "orange", "red": "red"}.get(self.level)
         return f":{color}[{self.text}]" if color else self.text
 
 
 def level_for(age_min, amber, red):
+    """Classify an age against amber and red thresholds: ok, amber, red, or unknown when the age is None."""
     if age_min is None:
         return "unknown"
     return "ok" if age_min < amber else "amber" if age_min < red else "red"
 
 
 def minutes_since(iso, now):
+    """Minutes between an ISO timestamp and `now`, or None for no timestamp."""
     return None if not iso else (now - datetime.fromisoformat(iso)).total_seconds() / 60
 
 
 def _ago(age_min):
+    """Human text for an age in minutes ('12 min ago', '3.5 h ago', 'never')."""
     return "never" if age_min is None else f"{age_min:.0f} min ago" if age_min < 120 else f"{age_min / 60:.1f} h ago"
 
 
 def collection_freshness(now):
+    """How long ago a collection last succeeded (Apify or GDELT fetch in job_runs)."""
     iso = storage.last_success_time(COLLECTION_JOBS) or storage.last_cycle_finished()
     age = minutes_since(iso, now)
     return Freshness("Last collection", _ago(age),
@@ -79,5 +84,6 @@ def brief_freshness(now):
 
 
 def header(now=None):
+    """The three freshness indicators shown under the dashboard title."""
     now = now or datetime.now(timezone.utc)
     return [collection_freshness(now), price_freshness(now), brief_freshness(now)]

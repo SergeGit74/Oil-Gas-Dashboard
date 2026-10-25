@@ -35,10 +35,12 @@ def _step(name, fn):
 
 def _brief_day():
     # Same key run_evaluation saves the brief under.
+    """The date key (UTC) briefs and the daily-brief claim are stored under."""
     return storage.utcnow()[:10]
 
 
 def _claim_brief_run():
+    """Try to claim today's brief run (limited attempts and cooldown)."""
     return storage.claim_daily_run("daily_brief", _brief_day(), config.BRIEF_MAX_ATTEMPTS,
                                    config.BRIEF_RETRY_COOLDOWN_MIN)
 
@@ -69,6 +71,7 @@ def catch_up_brief(now=None):
 
 
 def collection_cycle():
+    """One costed collection cycle: collect, ingest, catch up a missed brief, email it, check source health."""
     with cost_tracker.cost_run("collection_cycle"):
         _step("run_collection", run_collection)
         _step("run_ingestion", run_ingestion)
@@ -78,6 +81,7 @@ def collection_cycle():
 
 
 def daily_brief_cycle():
+    """The 05:30 cycle: generate and evaluate the brief if claimed, email it, then run health, divergence and budget checks."""
     with cost_tracker.cost_run("daily_brief_cycle"):
         if _claim_brief_run():
             _step("run_evaluation", run_evaluation)
@@ -91,20 +95,24 @@ def daily_brief_cycle():
 
 
 def price_cycle():
+    """One zero-cost price poll."""
     with cost_tracker.cost_run("price_poll"):
         _step("fetch_prices", run_prices)  # logs its own status; _step logs 'failed' under the same name
 
 
 def price_retention():
+    """Daily job: roll up and purge old price ticks."""
     _step("price_retention", purge_old_ticks)
 
 
 def events_cycle():
+    """Daily job: reload the event calendar."""
     with cost_tracker.cost_run("load_events"):
         _step("load_events", run_load_events)  # logs its own status; _step logs 'failed' under the same name
 
 
 def main():
+    """Start the scheduler: register the jobs, run the startup cycles once, then block."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     missing = [k for k in config.REQUIRED_KEYS if not config.get(k)]
     if missing:  # steps that need these degrade or fail visibly; the scheduler itself keeps running
