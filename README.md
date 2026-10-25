@@ -62,6 +62,7 @@ jobs/scheduler.py (long-running process, APScheduler)
 |                    -> sentiment from stored last-24h verified articles -> EIA price check
 |                    -> save sentiment snapshot
 |    run_ingestion:  embed verified articles into the Chroma vector store (RAG)
+|    catch_up_brief: if past brief time and no brief for today, run run_evaluation
 |    source_health:  consecutive-degradation alerts for Apify, Serper, EIA
 |
 |  daily 05:30  [one costed run: daily_brief_cycle]
@@ -270,6 +271,13 @@ authentication in front of it.
 |---|---|---|
 | Collection cycle | Every 20 minutes | Collect, skip known articles, tag new ones, corroborate, compute sentiment and price confirmation, ingest verified articles, check source health |
 | Daily brief cycle | 05:30 in the desk timezone | Generate and evaluate the brief, check evaluation trend, source health, sentiment/price divergence, then check yesterday's cost against the budget |
+
+**Missed-brief catch-up.** Each collection cycle ends with `catch_up_brief` (in `jobs/scheduler.py`). If it is
+past `BRIEF_HOUR:BRIEF_MINUTE` in `DESK_TIMEZONE` and the `briefs` table has no row for today's date (the UTC
+date `run_evaluation` saves under), it runs `run_evaluation` and `check_eval_trend`. So a scheduler that was down
+at brief time produces the brief when it next starts or cycles. A brief flagged for review counts as present and
+is not regenerated; with no verified articles yet the attempt is skipped at no cost and retried next cycle. It
+does not rerun the source-health, divergence or budget checks.
 
 The scheduler's timezone, interval and brief time come from `DESK_TIMEZONE`, `COLLECTION_INTERVAL_MINUTES`,
 `BRIEF_HOUR` and `BRIEF_MINUTE` in `.env` (defaults: `Asia/Dubai`, 20, 05:30). The scheduler runs one
