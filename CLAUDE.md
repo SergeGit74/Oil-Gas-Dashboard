@@ -30,7 +30,7 @@ Call the venv's programs directly (no activation needed):
 
 Docker (`Dockerfile`, `docker-compose.yml`, `healthcheck.py`) is an alternative way to run the same code:
 `docker compose up -d --build` starts `init` (creates tables), `scheduler` and `dashboard`, sharing one named
-volume mounted at `/data`. It has **never been built or run here** (Docker is not installed on this machine), so
+volume mounted at `/data`. It has **never been built or run here** (the Docker CLI exists on this machine but the Docker Desktop daemon was not running), so
 treat the Docker files as untested. Keep the non-Docker workflow working: `config.py` defaults (`DATA_DIR` = project
 folder, `DESK_TIMEZONE=Asia/Dubai`, 20-minute interval, brief 05:30) must stay equal to the original behavior, and
 all three data paths derive from `config.DATA_DIR`. `constraints.txt` holds the exact tested versions the image

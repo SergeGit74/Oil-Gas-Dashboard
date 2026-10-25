@@ -10,8 +10,10 @@ This project is designed to be built and extended with **Claude Code**.
 
 **Status:** working draft. The collection cycle, tagging, sentiment and price check, ingestion, brief generation
 and evaluation, "ask the desk" and the dashboard have each been run against the live APIs once or a few times.
-Not yet exercised: Slack delivery, the cost-budget, evaluation-trend and sentiment-divergence alerts firing, and
-long unattended scheduler runs. Treat the "Known gaps" section as a checklist before relying on any output for
+The price poller, event calendar, story clustering and corroboration fix have run live for short periods. Not yet
+exercised: Slack delivery and the brief email against real services (only mocks so far), the cost-budget,
+evaluation-trend and sentiment-divergence alerts firing, the backtest (it needs about 30 days of prices), a hosted
+PostgreSQL, the Docker image, and long unattended scheduler runs. Treat the "Known gaps" section as a checklist before relying on any output for
 trading decisions or cost reporting.
 
 **Disclaimer:** this is not financial, investment or trading advice. Briefs, tags, sentiment and price checks are
@@ -111,10 +113,12 @@ All secrets are read from `.env`. They are never hardcoded and `.env` is gitigno
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Anthropic API | Yes | Tagging, brief generation, claim evaluation |
 | `VOYAGE_API_KEY` | Voyage AI | Yes | Embeddings for the RAG vector store |
-| `EIA_API_KEY` | EIA Open Data (free) | Yes | Brent/WTI spot prices, weekly crude stocks |
+| `EIA_API_KEY` | EIA Open Data (free) | Yes | Brent/WTI spot prices, weekly crude and distillate stocks, gas storage, release schedules |
 | `SERPER_API_KEY` | Serper | Yes | Claim corroboration (news search) |
 | `APIFY_TOKEN` | Apify | Yes | Running `topsail/compliant-commodity-intel`; also used to read run usage for cost tracking |
-| `SLACK_WEBHOOK_URL` | Slack incoming webhook | Optional | Alerts; falls back to logs and console if unset |
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook | Optional | High-impact news alerts and system alerts; system alerts fall back to logs and console if unset |
+| `TWELVE_DATA_API_KEY` | Twelve Data | Optional | Market price quotes (free Basic plan: 8 credits/min, 800/day) |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` | Your mail provider | Optional | The brief email (see "Delivery: alerts and email") |
 
 GDELT needs no key.
 
@@ -161,45 +165,12 @@ whole organization is rejected with a 400 asking for an `anthropic-workspace-id`
 | `SERPER_USD_PER_CREDIT` | `0.001` | Entry-pack rate; lower in larger packs |
 | `APIFY_FALLBACK_USD_PER_RESULT`, `APIFY_FALLBACK_USD_PER_START` | `0.0005`, `0` | Used only when Apify does not report a run's usage |
 
-### .env.example
+### .env.example and .gitignore
 
-```bash
-ANTHROPIC_API_KEY=
-VOYAGE_API_KEY=
-EIA_API_KEY=
-SERPER_API_KEY=
-APIFY_TOKEN=
-
-ANTHROPIC_MODEL=claude-sonnet-5-5
-DAILY_COST_BUDGET_USD=10
-
-# Optional: only for organization-scoped API keys (prefer a workspace-scoped key)
-# ANTHROPIC_WORKSPACE_ID=
-
-# Optional: alerts fall back to console/log only if not set
-SLACK_WEBHOOK_URL=
-
-# Optional price overrides (defaults live in pricing.py; verify against vendor pricing pages)
-# SONNET_INPUT_USD_PER_MTOK=2.00
-# SONNET_OUTPUT_USD_PER_MTOK=10.00
-# ANTHROPIC_PRICE_MULTIPLIER=1.0
-# SERPER_USD_PER_CREDIT=0.001
-# APIFY_FALLBACK_USD_PER_RESULT=0.0005
-# APIFY_FALLBACK_USD_PER_START=0
-```
-
-### .gitignore
-
-```bash
-.env
-venv/
-__pycache__/
-*.pyc
-oil_gas_archive/
-dashboard_store.db
-dashboard_store.backup.db
-eval_history.jsonl
-```
+`.env.example` in the repository lists every setting with its default and a comment, grouped by feature (core keys,
+scheduler, prices, delivery, trust and quality, PostgreSQL and password). Copy it to `.env` and fill in what you use;
+values are unquoted. `.gitignore` keeps `.env`, `venv/`, caches, the databases, `oil_gas_archive/`,
+`eval_history.jsonl`, `reports/` and `outbox/` out of git.
 
 ## Installation
 
@@ -281,7 +252,13 @@ requests>=2.32
 pandas>=2.2
 beautifulsoup4>=4.12
 apscheduler>=3.10
+exchange_calendars>=4.5
+pyyaml>=6.0
+psycopg[binary]>=3.1
 ```
+
+`constraints.txt` pins the exact tested versions (the Docker image and CI install with it); `requirements-dev.txt` adds
+`pytest` and `ruff`.
 
 ## Running the system
 
@@ -295,14 +272,17 @@ python -m jobs.scheduler
 streamlit run app.py
 ```
 
-The dashboard has no login, and "ask the desk" spends your API credit, so it must not be reachable by other
-people. `.streamlit/config.toml` makes `streamlit run app.py` listen on `127.0.0.1` (this PC only); the Docker
+The dashboard has no login by default (see "Dashboard password"), and "ask the desk" spends your API credit, so it
+must not be reachable by other people. `.streamlit/config.toml` makes `streamlit run app.py` listen on `127.0.0.1` (this PC only); the Docker
 setup publishes the port to `127.0.0.1` too. Do not change either to `0.0.0.0` or forward the port unless you add
 authentication in front of it.
 
 | Job | Trigger | What it does |
 |---|---|---|
 | Collection cycle | Every 20 minutes | Collect, skip known articles, tag new ones, corroborate, compute sentiment and price confirmation, ingest verified articles, check source health |
+| Price poll | Every 5 minutes (`PRICE_POLL_INTERVAL_MIN`) | Fetch quotes for the indicators that are due (hourly while their market is closed), within provider quotas; also runs at startup |
+| Price retention | 03:10 | Roll old ticks into daily closes and purge ticks older than 30 days |
+| Event load | 04:00 and at startup | Refresh `events` from `config/events.yaml` and EIA's release schedules |
 | Daily brief cycle | 05:30 in the desk timezone | Generate and evaluate the brief, check evaluation trend, source health, sentiment/price divergence, then check yesterday's cost against the budget |
 
 **Missed-brief catch-up.** `catch_up_brief` (in `jobs/scheduler.py`) runs at scheduler startup and after every
@@ -416,7 +396,7 @@ oil_gas_dashboard/
 └── eval_history.jsonl        # evaluation log (generated, gitignored)
 ```
 
-## Data model (SQLite)
+## Data model
 
 | Table | Contents |
 |---|---|
