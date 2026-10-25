@@ -60,13 +60,16 @@ jobs/scheduler.py (long-running process, APScheduler)
 |                    -> skip URLs already stored -> Claude tagging of NEW articles only (costed)
 |                    -> selective Serper corroboration of new articles (costed) -> save
 |                    -> sentiment from stored last-24h verified articles -> EIA price check
+|                    -> weekly EIA stocks / gas storage into eia_weekly (at most every 6 h)
 |                    -> save sentiment snapshot
 |    run_ingestion:  embed verified articles into the Chroma vector store (RAG)
 |    catch_up_brief: past 06:00 desk time with no brief for today -> claim, then run_evaluation
 |    source_health:  consecutive-degradation alerts for Apify, Serper, EIA
 |
 |  every 5 min  [one zero-cost run: price_poll]
+|    (a price tick is due on each indicator's own calendar-aware interval)
 |    run_prices: due indicators -> Twelve Data / Yahoo / EIA fallback chain -> price_ticks
+|  daily 04:00: load_events (config/events.yaml + EIA release schedules -> events table)
 |  daily 03:10: price_retention (roll ticks into price_daily, purge ticks older than 30 days)
 |
 |  daily 05:30  [one costed run: daily_brief_cycle, takes the same brief claim]
@@ -75,7 +78,7 @@ jobs/scheduler.py (long-running process, APScheduler)
 |
 v
 storage.py (SQLite shared store: articles, briefs, sentiment_history, job_runs, run_costs, run_claims,
-|           price_ticks, price_daily, api_quota)
+|           price_ticks, price_daily, api_quota, eia_weekly, events)
 |
 v
 app.py (Streamlit, separate process, read-only against the store)
@@ -134,6 +137,10 @@ whole organization is rejected with a 400 asking for an `anthropic-workspace-id`
 | `PRICE_POLL_INTERVAL_MIN`, `PRICE_POLL_OFFHOURS_INTERVAL_MIN` | `5`, `60` | Poll interval inside / outside an instrument's trading window (lengthened automatically to fit quotas) |
 | `PRICE_TICK_RETENTION_DAYS`, `PRICE_STALE_MINUTES` | `30`, `30` | Days of ticks kept before they are rolled into `price_daily`; age after which an open-market tile is marked stale |
 | `TWELVE_DATA_MAX_PER_MIN` / `_PER_DAY`, `YAHOO_MAX_PER_MIN` / `_PER_DAY`, `EIA_MAX_PER_MIN` / `_PER_DAY` | `8`/`800`, `20`/`2000`, `10`/`500` | Provider limits in credits; calls stop at 90% of the daily figure |
+| `EIA_WEEKLY_REFRESH_HOURS` | `6` | How often the weekly EIA series are refetched |
+| `STALE_COLLECTION_AMBER_MIN` / `_RED_MIN` | 2x / 4x the collection interval | Dashboard header: age of the last collection that turns amber / red |
+| `STALE_PRICE_AMBER_MIN` / `_RED_MIN` | 3x / 12x the price interval | Same for the last price fetch (judged only while a market is open) |
+| `STALE_BRIEF_RED_AFTER_MIN` | `180` | Minutes after the catch-up time with no brief before the header turns red (amber from the catch-up time) |
 | `DAILY_COST_BUDGET_USD` | `10` | Daily total above which a budget alert fires |
 | `SONNET_INPUT_USD_PER_MTOK`, `SONNET_OUTPUT_USD_PER_MTOK` | `2.00`, `10.00` | Price overrides for the default model |
 | `ANTHROPIC_PRICE_MULTIPLIER` | `1.0` | For example 1.1 if you use US-only inference pricing |
@@ -353,8 +360,12 @@ oil_gas_dashboard/
 ├── llm_pipeline.py           # source trust registry, news/commentary split, injection flags, tagging, brief generation
 ├── sentiment_analysis.py     # weighted Bull/Bear/Neutral aggregation, current_sentiment, divergence check
 ├── price_confirmation.py     # sentiment vs Brent price move: Confirmed/Partial/Divergent
+├── market_calendar.py        # open / closed / holiday per indicator (exchange_calendars), market-status line
+├── event_calendar.py         # events table: manual YAML + EIA release schedules; Watch-today text
+├── freshness.py              # dashboard header: collection / price / brief age with amber and red levels
 ├── market_data.py            # price providers (Twelve Data, Yahoo, EIA), quota manager, trading windows, polling plan
-├── config/market_symbols.json # the 8 indicators: label, unit, currency, trading window, per-provider symbol
+├── config/market_symbols.json # the 8 indicators: label, unit, currency, calendar code, fallback window, per-provider symbol
+├── config/events.yaml        # manual scheduled events (FOMC dates; add OPEC+ meetings by hand)
 ├── scripts/check_symbols.py  # symbol discovery -> reports/symbol_check.json (generated, gitignored)
 ├── tests/                    # pytest suite (mocked HTTP, throwaway database, network blocked)
 ├── pytest.ini, requirements-dev.txt
@@ -367,6 +378,7 @@ oil_gas_dashboard/
 │   ├── run_collection.py     # fetch, normalize, skip known, tag new, corroborate, sentiment, price check
 │   ├── run_ingestion.py      # embed verified articles into the vector store
 │   ├── run_prices.py         # price poll (fetch_prices) and the tick retention job
+│   ├── load_events.py        # load_events: fill the events table
 │   ├── run_evaluation.py     # generate and evaluate the morning brief
 │   ├── check_eval_trend.py   # groundedness drift monitoring
 │   ├── source_health.py      # generic consecutive-degradation monitor (Apify, Serper, EIA)
@@ -387,6 +399,8 @@ oil_gas_dashboard/
 | `run_claims` | `(job, day)` -> attempts and last attempt; lets a daily job run at most N times a day, spaced by a cooldown |
 | `price_ticks` | One row per fetched quote: indicator, quote time `ts`, price, previous close, change %, provider, `delayed_minutes`, `fetched_at`. Kept 30 days |
 | `price_daily` | Daily open/high/low/close per indicator, rolled up from ticks before they are purged |
+| `eia_weekly` | Weekly EIA series (crude stocks, distillate stocks, Lower 48 gas storage): series, period, value, unit |
+| `events` | Scheduled events: date, time, tz, title, category, source_url, source. Unique on (date, time, title) |
 | `api_quota` | Credits used per provider per UTC day |
 | `run_costs` | One row per scheduled run: Claude, Apify and Serper cost, token and credit totals, and `details_json` with the per-step breakdown, counters and warnings |
 
@@ -541,9 +555,9 @@ refresh every 60 seconds; the dashboard never calls a price provider.
   multi-symbol request) in `api_quota`. A call is refused once it would pass 90% of the daily limit, requests are
   split and paced to the per-minute limit, and the polling interval is lengthened automatically so the daily
   quota cannot run out early (8 symbols on one 800/day provider means at least 16 minutes).
-- **Rate.** Every `PRICE_POLL_INTERVAL_MIN` (5) minutes inside an instrument's trading window, every
-  `PRICE_POLL_OFFHOURS_INTERVAL_MIN` (60) outside it. The windows in the JSON file are approximate weekly sessions
-  used only to choose the rate; they ignore holidays and daily breaks.
+- **Rate.** Every `PRICE_POLL_INTERVAL_MIN` (5) minutes while an instrument's market is open, every
+  `PRICE_POLL_OFFHOURS_INTERVAL_MIN` (60) while it is closed or on holiday (see "Market context" for how
+  that is decided).
 - **Health.** Each poll logs `fetch_prices` to `job_runs` (`success`, `degraded` if any due indicator got no
   quote, `skipped` if nothing was due), is registered in `SOURCE_HEALTH_CONFIG` (threshold 3), and records
   per-provider call counters in the `price_poll` run. These runs cost nothing and are hidden from the dashboard's
@@ -552,6 +566,39 @@ refresh every 60 seconds; the dashboard never calls a price provider.
   older than `PRICE_TICK_RETENTION_DAYS` (whole days only). It is safe to run repeatedly.
 - **Without keys.** The dashboard and the scheduler start with no paid keys. Steps that need a missing key degrade
   or fail visibly in `job_runs`; with no price provider enabled, `fetch_prices` logs `degraded` with the reason.
+
+## Market context
+
+- **Market calendar.** `market_calendar.market_status(indicator, now)` returns `open`, `closed` (weekend or outside
+  hours) or `holiday` (a weekday with no session), plus the last close and next open. It uses
+  [`exchange_calendars`](https://pypi.org/project/exchange-calendars/): one library with minute-level sessions,
+  holidays and early closes for CME Globex (`CMES`, used for WTI, Henry Hub, gold, ULSD), ICE (`IEPA`, used for Brent
+  and DXY), Euronext Amsterdam (`XAMS`, used for TTF) and NYSE (`XNYS`, S&P 500). The other candidate,
+  `pandas_market_calendars`, has per-product CME calendars but no ICE Europe either, and would add a second
+  dependency. **Brent (`IEPA` is ICE US) and TTF (`XAMS` is Euronext, not ICE Endex) use proxy calendars**, because
+  the library has no calendar for ICE Futures Europe or ICE Endex; their holiday and hours labels are indicative.
+  If a calendar is unavailable the code falls back to the approximate weekly window in `market_symbols.json`.
+  Tiles for a closed market show "Closed, last close <date>" and the last session's change instead of a move, and the
+  poller uses the slow rate on weekends and holidays. `market_calendar.status_line()` builds the market-status line
+  that goes into the brief prompt and its trusted reference text.
+- **Freshness header.** The top of the dashboard shows the age of the last collection (newest successful Apify or
+  GDELT fetch in `job_runs`), the last price fetch (`price_ticks`, judged only while some market is open) and when
+  today's brief was generated (`briefs`). Each turns amber then red past the `STALE_*` thresholds.
+- **Spread and ratio.** The Brent-WTI spread and the gold/Brent ratio are computed from the latest ticks at read time.
+  They show "n/a" if the two quotes are more than 24 hours apart, and the spread also needs both from the same
+  provider. There is no TTF-Henry Hub spread: it needs currency and unit conversion, which is not implemented.
+- **EIA weekly data.** Crude stocks (`WCESTUS1`), distillate stocks (`WDISTUS1`, route `petroleum/stoc/wstk`) and Lower 48
+  gas storage (`NW2_EPG0_SWO_R48_BCF`, route `natural-gas/stor/wkly`) are fetched into `eia_weekly` by the collection
+  cycle at most every `EIA_WEEKLY_REFRESH_HOURS`, shown on the dashboard with the week-on-week change, and added, with
+  their own dates, to the brief's EIA context. The two new series ids were found with EIA's live route browser.
+- **Event calendar.** `jobs/load_events.py` (daily 04:00 and at scheduler start) fills the `events` table from
+  `config/events.yaml` (manual; new rows only, never deleted) and from EIA's published schedule pages: the Weekly
+  Petroleum Status Report and Weekly Natural Gas Storage Report standard day and time are read from each page's own
+  sentence, and its holiday exceptions move individual releases. If a page layout changes, the loader raises,
+  logs `load_events` as `degraded`, and keeps the existing rows. The dashboard lists the next 7 days.
+- **Watch today.** The brief's "Watch today" section may list only the events in the table for today and the next 3
+  days; the prompt says so, gives "none" when the table has none, and the same text is in the evaluator's trusted
+  reference data. Nothing deterministic enforces it after generation, so the evaluator is the check.
 
 ## Tests
 
@@ -563,7 +610,9 @@ python -m pytest
 The suite uses a throwaway database, blank API keys and blocks non-loopback network connections, so it makes no
 real or paid calls. It covers the daily-run claim (concurrent claimers, attempt cap, cooldown), the brief catch-up
 (no brief, flagged brief, published brief), the three price providers with mocked responses, the fallback order,
-the 90% quota refusal, per-minute pacing, trading windows, tick retention, and dashboard rendering with no keys.
+the 90% quota refusal, per-minute pacing, trading windows, tick retention, `market_status` on a weekend, a holiday and a normal day, the spread math, EIA weekly storage and
+gating, the EIA schedule parsers, event loading (idempotent; a bad page keeps old rows), the brief prompt containing
+only table events, the freshness levels, and dashboard rendering with no keys.
 
 ## Known gaps (verify before relying on the output)
 
@@ -580,6 +629,11 @@ the 90% quota refusal, per-minute pacing, trading windows, tick retention, and d
   Twelve Data's limits (8 credits/min, 800/day) come from its pricing page; Yahoo's and EIA's limits in
   `config.py` are conservative guesses, not published figures. Trading windows are approximate until a market
   calendar is added. Yahoo's chart data used here carries no delay figure, so "delayed" appears only if one is reported.
+- **Calendars and event sources.** Brent and TTF use proxy calendars (see "Market context"); `exchange_calendars`
+  holiday accuracy for futures venues is unverified. FOMC dates in `events.yaml` were copied from the Federal Reserve
+  calendar page on 2026-10-25 and carry no time (the page gives none). No OPEC+ date could be confirmed on an
+  official OPEC page (the site refused the fetcher), so the OPEC+ list is empty until you add dates by hand. The EIA
+  schedules are parsed from HTML text and can break when EIA changes a page.
 - **Price check uses lagging data.** EIA spot prices arrived about nine days behind the calendar in testing, so
   the Confirmed/Partial/Divergent status compares today's news sentiment with the move between the last two EIA
   observations, which may be from a different week. Treat it as indicative until a fresher price source is added.

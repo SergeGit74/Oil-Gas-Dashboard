@@ -7,3 +7,5 @@ requests>=2.32
 pandas>=2.2
 beautifulsoup4>=4.12
 apscheduler>=3.10
+exchange_calendars>=4.5
+pyyaml>=6.0

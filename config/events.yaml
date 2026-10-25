@@ -1,0 +1,38 @@
+# Manual scheduled events. The brief's "Watch today" section and the dashboard's 7-day list are built ONLY from
+# the events table, which this file feeds (plus EIA release dates read from EIA's schedule pages by
+# jobs/load_events.py). Add entries by hand, with a source_url you have checked; never add a date from memory.
+#
+# Fields: date (YYYY-MM-DD), title, category, source_url, and optionally time ("HH:MM", quote it) with tz.
+# Entries are added if new and never deleted, so removing a line here does not remove an old row.
+#
+# FOMC dates below are copied from https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm (read
+# 2026-10-25). The page lists two-day meetings without a statement time, so no time is set.
+#
+# OPEC+: no upcoming date could be confirmed on an official OPEC page (opec.org returned HTTP 402 to the fetcher,
+# and the only upcoming dates found came from secondary sources). Add a JMMC or ministerial meeting here once it
+# is announced, for example:
+#   - date: 2026-12-06
+#     title: OPEC+ JMMC meeting
+#     category: OPEC+
+#     source_url: https://www.opec.org/press-releases.html
+events:
+  - {date: 2026-10-27, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2026-10-28, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2026-12-08, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2026-12-09, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-01-26, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-01-27, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-03-16, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-03-17, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-04-27, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-04-28, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-06-08, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-06-09, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-07-27, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-07-28, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-09-14, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-09-15, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-10-26, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-10-27, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-12-07, title: "FOMC meeting (day 1 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+  - {date: 2027-12-08, title: "FOMC meeting (day 2 of 2)", category: FOMC, source_url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}

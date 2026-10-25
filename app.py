@@ -1,13 +1,16 @@
 """Streamlit dashboard. Reads from the shared store; the only write path is 'ask the desk',
 which is wrapped in cost_run so its Claude spend is recorded."""
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import streamlit as st
 
 import config
 import cost_tracker
+import freshness
+import market_calendar
+import market_data
 import storage
 
 st.set_page_config(page_title="Oil & Gas Morning Intelligence", layout="wide")
@@ -71,6 +74,11 @@ with st.sidebar:
 st.title("Oil & Gas Morning Intelligence")
 st.caption("Automated collection, verification and briefing. Not investment advice; review flagged items.")
 
+# ---- data freshness -------------------------------------------------------
+# Computed from job_runs, price_ticks and briefs (see freshness.py); amber and red thresholds are in config.
+for col, item in zip(st.columns(3), freshness.header()):
+    col.markdown(f"**{item.label}**  \n{item.colored}")
+
 # ---- market prices --------------------------------------------------------
 # Reads only price_ticks (filled by the scheduler's price poller); never calls a market-data provider.
 PRICE_REFRESH = "60s"
@@ -82,8 +90,6 @@ def _fmt_price(value, decimals):
 
 @st.fragment(run_every=PRICE_REFRESH)
 def price_panel():
-    import market_data  # lazy: only for the symbol config and trading windows
-
     st.subheader("Market prices")
     indicators = market_data.load_indicators()
     ticks = storage.latest_ticks()
@@ -103,23 +109,64 @@ def price_panel():
                     continue
                 as_of = datetime.fromisoformat(tick["ts"])
                 age_min = (now - as_of).total_seconds() / 60
-                is_open = market_data.in_window(cfg["window"], now)
+                status = market_calendar.market_status(cfg, now)
+                is_open = status.status == "open"
+                # A closed market shows its last close, not a change presented as an overnight move.
                 st.metric(f"{key} ({cfg['unit']})", _fmt_price(tick["price"], cfg["decimals"]),
-                          f"{tick['change_pct']:+.2f}%" if tick["change_pct"] is not None else None)
+                          f"{tick['change_pct']:+.2f}%" if is_open and tick["change_pct"] is not None else None)
                 notes = [f"as of {as_of:%d %b %H:%M} UTC", tick["provider"]]
                 if tick["delayed_minutes"]:
                     notes.append(f"delayed {tick['delayed_minutes']} min")
                 st.caption(" | ".join(notes))
-                if is_open and age_min > config.PRICE_STALE_MINUTES:
-                    st.caption(f":orange[Stale: last quote {age_min:.0f} min old]")
-                elif not is_open:
-                    st.caption("Outside trading hours (approximate)")
+                if is_open:
+                    if age_min > config.PRICE_STALE_MINUTES:
+                        st.caption(f":orange[Stale: last quote {age_min:.0f} min old]")
+                else:
+                    last_close = datetime.fromisoformat(status.last_close) if status.last_close else as_of
+                    st.caption(f"Closed{' (holiday)' if status.status == 'holiday' else ''}, "
+                               f"last close {last_close:%d %b %Y}"
+                               + (f". Last session {tick['change_pct']:+.2f}%" if tick["change_pct"] is not None else ""))
                 series = storage.price_series(key, since)
                 if len(series) > 1:
                     st.line_chart(pd.DataFrame(series).set_index("ts")["price"], height=70)
 
+    derived = market_data.derived_metrics(ticks)
+    d1, d2 = st.columns(2)
+    spread, ratio = derived["brent_wti_spread"], derived["gold_brent_ratio"]
+    d1.metric("Brent-WTI spread (USD/bbl)", f"{spread['value']:+.2f}" if spread else "n/a")
+    d1.caption(f"{spread['provider']}, as of {spread['as_of'][:16].replace('T', ' ')} UTC" if spread
+               else "Needs both quotes from the same provider within 24 h")
+    d2.metric("Gold / Brent (bbl per oz)", f"{ratio['value']:.2f}" if ratio else "n/a")
+    d2.caption(f"{ratio['provider']}, as of {ratio['as_of'][:16].replace('T', ' ')} UTC" if ratio
+               else "Needs both quotes within 24 h")
+
 
 price_panel()
+
+# ---- EIA weekly and scheduled events --------------------------------------
+# Both read tables filled by the scheduler (eia_weekly, events); the dashboard never calls EIA.
+st.subheader("EIA weekly data")
+weekly_cols = st.columns(3)
+for col, (key, label, unit) in zip(weekly_cols, (("crude_stocks", "US crude stocks", "thousand bbl"),
+                                                  ("distillate_stocks", "US distillate stocks", "thousand bbl"),
+                                                  ("gas_storage", "Lower 48 gas storage", "Bcf"))):
+    rows = storage.eia_weekly(key, 2)
+    if rows:
+        change = rows[0]["value"] - rows[1]["value"] if len(rows) > 1 else None
+        col.metric(f"{label} ({unit})", f"{rows[0]['value']:,.0f}",
+                   f"{change:+,.0f} vs prior week" if change is not None else None, delta_color="off")
+        col.caption(f"week ending {rows[0]['period']}")
+    else:
+        col.metric(f"{label} ({unit})", "n/a")
+
+st.subheader("Scheduled events, next 7 days")
+today_utc = datetime.now(timezone.utc).date()
+upcoming = storage.events_between(today_utc.isoformat(), (today_utc + timedelta(days=7)).isoformat())
+if upcoming:
+    st.dataframe(pd.DataFrame(upcoming)[["date", "time", "tz", "title", "category", "source_url"]],
+                 width="stretch", hide_index=True, column_config={"source_url": st.column_config.LinkColumn("source")})
+else:
+    st.write("No scheduled events in the table for the next 7 days.")
 
 history = storage.sentiment_history(30)
 latest = history[0] if history else None

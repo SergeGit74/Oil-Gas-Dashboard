@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An oil and gas morning-intelligence system: a scheduler collects and tags news, a SQLite store holds the results,
 and a Streamlit dashboard reads them. `README.md` has the full design and known gaps; `USER_GUIDE.md` is the
 operator guide. The project runs on Windows with a project-local `venv/`; it has a git repo and a pytest suite
-(`tests/`), and no linter configured. `CLAUDE_CODE_TASKS.md` is the phased task brief (Phases 0-1 are done).
+(`tests/`), and no linter configured. `CLAUDE_CODE_TASKS.md` is the phased task brief (Phases 0-2 are done).
 
 ## Commands
 
@@ -85,6 +85,23 @@ that returns a quote. Yahoo is an unofficial endpoint, off unless `ENABLE_YAHOO_
 raised automatically to fit the quota). The symbols and trading windows in the JSON file are candidates and
 approximations, not verified facts; `config.py` limits for Yahoo and EIA are guesses. `config/` is a data folder next
 to `config.py`: the module wins on import, and a test guards that.
+
+### Market context (`market_calendar.py`, `event_calendar.py`, `freshness.py`)
+
+- `market_calendar.market_status(indicator, now)` -> open / closed / holiday from `exchange_calendars`, with the code
+  per indicator in `config/market_symbols.json`. **Brent (`IEPA` = ICE US) and TTF (`XAMS` = Euronext) are proxy
+  calendars**; do not describe their holiday labels as exact. The poller's interval, the tiles and the brief's
+  market-status line all use it, falling back to the approximate `window` if a calendar fails.
+- The `events` table is the only source for the brief's "Watch today" and the dashboard's 7-day list. It is filled by
+  `jobs/load_events.py` from `config/events.yaml` (manual, insert-only; copy dates only from an official page and give
+  a `source_url`) and from EIA's schedule pages (parsed from page text; a parse failure logs `load_events` degraded and
+  keeps old rows). Never add a date from memory. The unique key is `(date, COALESCE(time,''), title)` because SQLite
+  treats NULLs in a plain UNIQUE as distinct.
+- Weekly EIA series live in `eia_weekly` (written by `data_sources.refresh_eia_weekly`, gated to
+  `EIA_WEEKLY_REFRESH_HOURS`); the dashboard reads the table and must not call EIA. `freshness.header()` feeds the
+  dashboard header from `job_runs`, `price_ticks` and `briefs`.
+- Anything added to the brief prompt must also go into the `context` passed to `evaluate_brief`, or its numbers fail
+  the numeric-fidelity check.
 
 ### Trust model (spans `llm_pipeline.py`, `storage.py`, `config.py`)
 

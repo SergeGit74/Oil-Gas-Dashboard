@@ -109,6 +109,28 @@ CREATE TABLE IF NOT EXISTS price_daily (
     PRIMARY KEY (indicator_key, day)
 );
 
+CREATE TABLE IF NOT EXISTS eia_weekly (
+    series_key TEXT NOT NULL,
+    period TEXT NOT NULL,
+    value REAL NOT NULL,
+    unit TEXT,
+    fetched_at TEXT,
+    PRIMARY KEY (series_key, period)
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    time TEXT,
+    tz TEXT,
+    title TEXT NOT NULL,
+    category TEXT,
+    source_url TEXT,
+    source TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_events ON events(date, COALESCE(time, ''), title);
+
 CREATE TABLE IF NOT EXISTS api_quota (
     provider TEXT NOT NULL,
     day_utc TEXT NOT NULL,
@@ -307,6 +329,68 @@ def purge_ticks(retention_days=30, now=None):
                 (key, day, prices[0], max(prices), min(prices), prices[-1], len(prices), ticks[-1]["provider"]))
         deleted = conn.execute("DELETE FROM price_ticks WHERE substr(ts,1,10) < ?", (cutoff,)).rowcount
     return len(days), deleted
+
+
+# ---- EIA weekly series ----------------------------------------------------
+
+def save_eia_weekly(series_key, rows, unit):
+    """rows: [(period, value), ...]. Upserts, so a revised value replaces the old one."""
+    now = utcnow()
+    with connect() as conn:
+        conn.executemany("INSERT OR REPLACE INTO eia_weekly (series_key, period, value, unit, fetched_at) "
+                         "VALUES (?,?,?,?,?)", [(series_key, p, v, unit, now) for p, v in rows])
+
+
+def eia_weekly(series_key, limit=5):
+    """Newest first: [{period, value, unit, fetched_at}, ...]."""
+    return _rows("SELECT period, value, unit, fetched_at FROM eia_weekly WHERE series_key = ? "
+                 "ORDER BY period DESC LIMIT ?", (series_key, limit))
+
+
+def last_eia_weekly_fetch():
+    rows = _rows("SELECT MAX(fetched_at) AS t FROM eia_weekly")
+    return rows[0]["t"]
+
+
+# ---- events ---------------------------------------------------------------
+
+def upsert_events(rows):
+    """Insert new events, ignore ones already present (same date, time and title). Never deletes."""
+    cols = ["date", "time", "tz", "title", "category", "source_url", "source"]
+    with connect() as conn:
+        conn.executemany(f"INSERT OR IGNORE INTO events ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                         [tuple(r.get(c) for c in cols) for r in rows])
+
+
+def replace_future_events(source, from_date, rows):
+    """For events regenerated from an external schedule: swap that source's rows dated from `from_date` on.
+    One transaction, so a failed insert leaves the old rows in place."""
+    cols = ["date", "time", "tz", "title", "category", "source_url", "source"]
+    with connect() as conn:
+        conn.execute("DELETE FROM events WHERE source = ? AND date >= ?", (source, from_date))
+        conn.executemany(f"INSERT OR IGNORE INTO events ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                         [tuple({**r, "source": source}.get(c) for c in cols) for r in rows])
+
+
+def events_between(start_date, end_date):
+    """Events with start_date <= date <= end_date (ISO dates), earliest first; undated times sort first."""
+    return _rows("SELECT * FROM events WHERE date >= ? AND date <= ? ORDER BY date, COALESCE(time, ''), title",
+                 (start_date, end_date))
+
+
+# ---- freshness ------------------------------------------------------------
+
+def last_success_time(job_names):
+    """ISO time of the newest 'success' job_runs row among these jobs, or None."""
+    marks = ",".join("?" * len(job_names))
+    rows = _rows(f"SELECT MAX(created_at) AS t FROM job_runs WHERE status = 'success' AND job_name IN ({marks})",
+                 tuple(job_names))
+    return rows[0]["t"]
+
+
+def last_price_fetch():
+    rows = _rows("SELECT MAX(fetched_at) AS t FROM price_ticks")
+    return rows[0]["t"]
 
 
 # ---- API quota ------------------------------------------------------------

@@ -84,6 +84,7 @@ def run_collection():
 
     # Sentiment and price check run every cycle from stored articles, not from this cycle's new ones.
     eia = data_sources.fetch_eia_data()
+    data_sources.refresh_eia_weekly()  # weekly stocks and gas storage for the dashboard; gated to every few hours
     sentiment = sentiment_analysis.current_sentiment()
     price = price_confirmation.confirm_price(sentiment["label"], eia)
     storage.save_sentiment(now[:10], sentiment, price)

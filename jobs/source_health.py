@@ -8,6 +8,8 @@ SOURCE_HEALTH_CONFIG = {
     "serper_corroboration": {"label": "Serper corroboration", "threshold": 3},
     "fetch_eia_data": {"label": "EIA price and inventory data", "threshold": 2},
     "fetch_prices": {"label": "Market prices", "threshold": 3},
+    "fetch_eia_weekly": {"label": "EIA weekly stocks and gas storage", "threshold": 2},
+    "load_events": {"label": "Event calendar (EIA schedules)", "threshold": 3},
 }
 BAD_STATUSES = {"degraded", "failed"}
 

@@ -42,6 +42,11 @@ you do not need to activate it.
   top of the dashboard need at least one price source: `TWELVE_DATA_API_KEY`, `ENABLE_YAHOO_FALLBACK=true`
   (unofficial Yahoo endpoint) or your existing `EIA_API_KEY` (Brent and WTI only, daily). Run
   `python scripts/check_symbols.py` to see which symbols work.
+- The row under the page title shows how fresh the data is: last collection, last price fetch and when today's brief
+  was generated. Green is normal, orange is late and red means something is probably not running. A closed market's
+  tile says "Closed, last close <date>" instead of showing a move. The page also lists EIA weekly stocks and gas
+  storage and the next 7 days of scheduled events (EIA releases, FOMC). OPEC+ meetings only appear if you add them
+  to `config/events.yaml` with a source link.
 - **Stop** either program with **Ctrl+C** in its window.
 - After any code change, stop and restart the program; running programs keep the old code.
 - Start only one scheduler and one dashboard. Two schedulers double the cost; a second dashboard moves to port 8502.

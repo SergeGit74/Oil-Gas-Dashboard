@@ -11,7 +11,7 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -298,8 +298,41 @@ def budget_floor_minutes(assignment, limits=None):
 
 
 def interval_minutes(cfg, now, floor=0.0):
-    base = config.PRICE_POLL_INTERVAL_MIN if in_window(cfg["window"], now) else config.PRICE_POLL_OFFHOURS_INTERVAL_MIN
+    import market_calendar  # imported here: market_calendar itself imports this module
+
+    open_now = market_calendar.market_status(cfg, now).status == "open"  # closed and holiday poll at the slow rate
+    base = config.PRICE_POLL_INTERVAL_MIN if open_now else config.PRICE_POLL_OFFHOURS_INTERVAL_MIN
     return max(base, floor)
+
+
+# ---- derived values (computed at read time, no extra API calls) ------------
+DERIVED_MAX_GAP = timedelta(hours=24)
+
+
+def derived_metrics(ticks):
+    """Brent-WTI spread and gold/Brent ratio from the latest ticks ({key: row}). Each entry is None when an input
+    is missing or the two quotes are more than 24 hours apart (so it never mixes a stale and a fresh quote). The
+    spread also needs both quotes from the same provider, so it compares like with like. No TTF/Henry Hub spread:
+    that needs currency and unit conversion, which is not implemented."""
+    def pair(a, b, same_provider):
+        ta, tb = ticks.get(a), ticks.get(b)
+        if not ta or not tb:
+            return None
+        gap = abs(datetime.fromisoformat(ta["ts"]) - datetime.fromisoformat(tb["ts"]))
+        if gap > DERIVED_MAX_GAP or (same_provider and ta["provider"] != tb["provider"]):
+            return None
+        return ta, tb
+
+    out = {"brent_wti_spread": None, "gold_brent_ratio": None}
+    p = pair("BRENT", "WTI", same_provider=True)
+    if p:
+        out["brent_wti_spread"] = {"value": round(p[0]["price"] - p[1]["price"], 2), "unit": "USD/bbl",
+                                   "as_of": min(p[0]["ts"], p[1]["ts"]), "provider": p[0]["provider"]}
+    p = pair("GOLD", "BRENT", same_provider=False)
+    if p:
+        out["gold_brent_ratio"] = {"value": round(p[0]["price"] / p[1]["price"], 2), "unit": "barrels per ounce",
+                                   "as_of": min(p[0]["ts"], p[1]["ts"]), "provider": f"{p[0]['provider']}/{p[1]['provider']}"}
+    return out
 
 
 def due_indicators(indicators, last_fetch, now, floor=0.0):

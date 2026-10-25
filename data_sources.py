@@ -5,7 +5,7 @@ import logging
 import re
 import time
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
@@ -101,6 +101,41 @@ def fetch_eia_data():
         errors.append(str(exc))
     storage.log_job("fetch_eia_data", "degraded" if errors or not data else "success", "; ".join(errors))
     return data
+
+
+# Weekly series stored in eia_weekly so the dashboard can show them without calling EIA. Routes and series ids were
+# found with EIA's live route browser (2026-10-25): WDISTUS1 = U.S. ending stocks of distillate fuel oil (thousand
+# bbl), NW2_EPG0_SWO_R48_BCF = Lower 48 working gas in underground storage (Bcf).
+EIA_WEEKLY_SERIES = {
+    "crude_stocks": ("petroleum/stoc/wstk", "WCESTUS1", "US crude oil stocks", "thousand bbl"),
+    "distillate_stocks": ("petroleum/stoc/wstk", "WDISTUS1", "US distillate fuel oil stocks", "thousand bbl"),
+    "gas_storage": ("natural-gas/stor/wkly", "NW2_EPG0_SWO_R48_BCF", "Lower 48 natural gas storage", "Bcf"),
+}
+
+
+def refresh_eia_weekly(force=False):
+    """Fetch the weekly series into eia_weekly, at most once every config.EIA_WEEKLY_REFRESH_HOURS (they change
+    once a week, so most cycles make no call and log nothing). A real attempt logs 'fetch_eia_weekly'."""
+    last = storage.last_eia_weekly_fetch()
+    if not force and last and (datetime.now(timezone.utc) - datetime.fromisoformat(last)
+                               < timedelta(hours=config.EIA_WEEKLY_REFRESH_HOURS)):
+        return False
+    errors = []
+    try:
+        config.require_keys("EIA_API_KEY")
+        for key, (route, series, _label, unit) in EIA_WEEKLY_SERIES.items():
+            try:
+                rows = _eia_series(route, series, "weekly", length=8)
+                if rows:
+                    storage.save_eia_weekly(key, rows, unit)
+                else:
+                    errors.append(f"{key}: no data")
+            except (requests.RequestException, KeyError, ValueError) as exc:
+                errors.append(f"{key}: {exc}")
+    except RuntimeError as exc:
+        errors.append(str(exc))
+    storage.log_job("fetch_eia_weekly", "degraded" if errors else "success", "; ".join(errors))
+    return not errors
 
 
 # ---- GDELT ----------------------------------------------------------------

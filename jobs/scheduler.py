@@ -12,6 +12,7 @@ import storage
 from jobs.check_cost_budget import check_cost_budget
 from jobs.check_eval_trend import check_eval_trend
 from jobs.run_collection import run_collection
+from jobs.load_events import run_load_events
 from jobs.run_evaluation import run_evaluation
 from jobs.run_ingestion import run_ingestion
 from jobs.run_prices import purge_old_ticks, run_prices
@@ -95,6 +96,11 @@ def price_retention():
     _step("price_retention", purge_old_ticks)
 
 
+def events_cycle():
+    with cost_tracker.cost_run("load_events"):
+        _step("load_events", run_load_events)  # logs its own status; _step logs 'failed' under the same name
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     missing = [k for k in config.REQUIRED_KEYS if not config.get(k)]
@@ -109,7 +115,9 @@ def main():
                       id="daily_brief_cycle", max_instances=1, coalesce=True)
     scheduler.add_job(price_retention, "cron", hour=3, minute=10, id="price_retention",
                       max_instances=1, coalesce=True)
-    log.info("Scheduler started (%s). Running one price poll and one collection cycle now.", TIMEZONE)
+    scheduler.add_job(events_cycle, "cron", hour=4, minute=0, id="load_events", max_instances=1, coalesce=True)
+    log.info("Scheduler started (%s). Running the event load, one price poll and one collection cycle now.", TIMEZONE)
+    _step("events_cycle", events_cycle)  # before the first brief catch-up so "Watch today" has its events
     _step("price_cycle", price_cycle)
     _step("collection_cycle", collection_cycle)
     scheduler.start()

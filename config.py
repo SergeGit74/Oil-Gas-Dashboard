@@ -52,6 +52,15 @@ PRICE_POLL_INTERVAL_MIN = int(os.getenv("PRICE_POLL_INTERVAL_MIN") or 5)        
 PRICE_POLL_OFFHOURS_INTERVAL_MIN = int(os.getenv("PRICE_POLL_OFFHOURS_INTERVAL_MIN") or 60)
 PRICE_TICK_RETENTION_DAYS = int(os.getenv("PRICE_TICK_RETENTION_DAYS") or 30)
 PRICE_STALE_MINUTES = int(os.getenv("PRICE_STALE_MINUTES") or 30)  # an open-market tile older than this is stale
+EIA_WEEKLY_REFRESH_HOURS = int(os.getenv("EIA_WEEKLY_REFRESH_HOURS") or 6)  # weekly series change once a week
+
+# ---- staleness thresholds in the dashboard header (minutes) ----
+STALE_COLLECTION_AMBER_MIN = int(os.getenv("STALE_COLLECTION_AMBER_MIN") or 2 * COLLECTION_INTERVAL_MINUTES)
+STALE_COLLECTION_RED_MIN = int(os.getenv("STALE_COLLECTION_RED_MIN") or 4 * COLLECTION_INTERVAL_MINUTES)
+STALE_PRICE_AMBER_MIN = int(os.getenv("STALE_PRICE_AMBER_MIN") or 3 * PRICE_POLL_INTERVAL_MIN)
+STALE_PRICE_RED_MIN = int(os.getenv("STALE_PRICE_RED_MIN") or 12 * PRICE_POLL_INTERVAL_MIN)
+STALE_BRIEF_RED_AFTER_MIN = int(os.getenv("STALE_BRIEF_RED_AFTER_MIN") or 180)  # amber past catch-up time, red this much later
+
 QUOTA_SAFETY_FRACTION = 0.9  # refuse calls beyond this share of a provider's daily limit
 # provider -> (credits per minute, credits per day). Defaults are conservative guesses except Twelve Data's, which
 # is its published Basic plan (8/min, 800/day); override in .env if your plan differs.
