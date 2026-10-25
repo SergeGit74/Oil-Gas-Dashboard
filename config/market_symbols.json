@@ -1,0 +1,45 @@
+{
+  "_note": "Symbols are CANDIDATES until scripts/check_symbols.py confirms them (see reports/symbol_check.json). A null symbol means the provider is not tried for that indicator. Trading windows are approximate weekly sessions used only to choose the polling rate; Phase 2 replaces them with a real exchange calendar.",
+  "indicators": {
+    "BRENT": {
+      "label": "Brent crude, front month", "unit": "USD/bbl", "currency": "USD", "decimals": 2,
+      "window": {"kind": "weekly", "tz": "America/New_York", "open": "Sun 20:00", "close": "Fri 17:00"},
+      "symbols": {"twelvedata": null, "yahoo": "BZ=F", "eia": "brent"}
+    },
+    "WTI": {
+      "label": "WTI crude, front month", "unit": "USD/bbl", "currency": "USD", "decimals": 2,
+      "window": {"kind": "weekly", "tz": "America/New_York", "open": "Sun 18:00", "close": "Fri 17:00"},
+      "symbols": {"twelvedata": null, "yahoo": "CL=F", "eia": "wti"}
+    },
+    "HENRY_HUB": {
+      "label": "Henry Hub natural gas", "unit": "USD/MMBtu", "currency": "USD", "decimals": 3,
+      "window": {"kind": "weekly", "tz": "America/New_York", "open": "Sun 18:00", "close": "Fri 17:00"},
+      "symbols": {"twelvedata": null, "yahoo": "NG=F", "eia": null}
+    },
+    "TTF": {
+      "label": "Dutch TTF gas, front month", "unit": "EUR/MWh", "currency": "EUR", "decimals": 2,
+      "window": {"kind": "weekly", "tz": "Europe/Amsterdam", "open": "Mon 00:00", "close": "Fri 23:00"},
+      "symbols": {"twelvedata": null, "yahoo": "TTF=F", "eia": null}
+    },
+    "GOLD": {
+      "label": "Gold", "unit": "USD/oz", "currency": "USD", "decimals": 2,
+      "window": {"kind": "weekly", "tz": "America/New_York", "open": "Sun 18:00", "close": "Fri 17:00"},
+      "symbols": {"twelvedata": "XAU/USD", "yahoo": "GC=F", "eia": null}
+    },
+    "DXY": {
+      "label": "US dollar index", "unit": "index", "currency": "USD", "decimals": 3,
+      "window": {"kind": "weekly", "tz": "America/New_York", "open": "Sun 18:00", "close": "Fri 17:00"},
+      "symbols": {"twelvedata": null, "yahoo": "DX-Y.NYB", "eia": null}
+    },
+    "SPX": {
+      "label": "S&P 500", "unit": "index", "currency": "USD", "decimals": 2,
+      "window": {"kind": "daily", "tz": "America/New_York", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "start": "09:30", "end": "16:00"},
+      "symbols": {"twelvedata": null, "yahoo": "^GSPC", "eia": null}
+    },
+    "ULSD": {
+      "label": "ULSD / heating oil, front month", "unit": "USD/gal", "currency": "USD", "decimals": 4,
+      "window": {"kind": "weekly", "tz": "America/New_York", "open": "Sun 18:00", "close": "Fri 17:00"},
+      "symbols": {"twelvedata": null, "yahoo": "HO=F", "eia": null}
+    }
+  }
+}

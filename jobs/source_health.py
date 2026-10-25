@@ -7,6 +7,7 @@ SOURCE_HEALTH_CONFIG = {
     "fetch_apify_commodity_news": {"label": "Apify trade-press feed", "threshold": 3},
     "serper_corroboration": {"label": "Serper corroboration", "threshold": 3},
     "fetch_eia_data": {"label": "EIA price and inventory data", "threshold": 2},
+    "fetch_prices": {"label": "Market prices", "threshold": 3},
 }
 BAD_STATUSES = {"degraded", "failed"}
 
@@ -24,12 +25,20 @@ def current_streak(job_name):
     return streak
 
 
-def check_source_health():
-    """Alert once when a streak reaches its threshold (not on every cycle of a long outage)."""
-    alerted = []
+def check_source_health(notify=True):
+    """notify=True (scheduler): alert once when a streak reaches its threshold (not on every cycle of a long
+    outage) and return the sources alerted.
+
+    notify=False (dashboard): read-only. Sends nothing and writes nothing to job_runs, so a page load can never
+    cause an alert; returns every source whose streak is at or past its threshold."""
+    flagged = []
     for job_name, cfg in SOURCE_HEALTH_CONFIG.items():
-        if current_streak(job_name) == cfg["threshold"]:
-            alerts.send_alert(f"{cfg['label']} degraded for {cfg['threshold']} consecutive cycles.",
-                              source=job_name)
-            alerted.append(job_name)
-    return alerted
+        streak = current_streak(job_name)
+        if notify:
+            if streak == cfg["threshold"]:
+                alerts.send_alert(f"{cfg['label']} degraded for {cfg['threshold']} consecutive cycles.",
+                                  source=job_name)
+                flagged.append(job_name)
+        elif streak >= cfg["threshold"]:
+            flagged.append(job_name)
+    return flagged

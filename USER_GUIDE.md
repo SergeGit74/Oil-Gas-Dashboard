@@ -36,8 +36,12 @@ you do not need to activate it.
 - The first time, Streamlit may ask for an email address. Press **Enter** to skip it.
 - The scheduler runs one cycle at startup, so expect log lines within a minute, ending in `Scheduler started`.
 - If the scheduler was not running at 05:30, it writes the missed brief on its next collection cycle (at startup
-  or within 20 minutes), as long as that cycle is after the brief time and today has no brief yet. This costs
-  about $0.07, like a normal brief.
+  or within 20 minutes), once it is past 06:00 desk time and today has no brief yet. It tries at most twice a day,
+  30 minutes apart. This costs about $0.07, like a normal brief. Until then the dashboard shows "Brief pending".
+- The scheduler also polls market prices every 5 minutes (hourly when a market is closed). The price tiles at the
+  top of the dashboard need at least one price source: `TWELVE_DATA_API_KEY`, `ENABLE_YAHOO_FALLBACK=true`
+  (unofficial Yahoo endpoint) or your existing `EIA_API_KEY` (Brent and WTI only, daily). Run
+  `python scripts/check_symbols.py` to see which symbols work.
 - **Stop** either program with **Ctrl+C** in its window.
 - After any code change, stop and restart the program; running programs keep the old code.
 - Start only one scheduler and one dashboard. Two schedulers double the cost; a second dashboard moves to port 8502.

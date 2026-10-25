@@ -71,6 +71,56 @@ with st.sidebar:
 st.title("Oil & Gas Morning Intelligence")
 st.caption("Automated collection, verification and briefing. Not investment advice; review flagged items.")
 
+# ---- market prices --------------------------------------------------------
+# Reads only price_ticks (filled by the scheduler's price poller); never calls a market-data provider.
+PRICE_REFRESH = "60s"
+
+
+def _fmt_price(value, decimals):
+    return f"{value:,.{decimals}f}"
+
+
+@st.fragment(run_every=PRICE_REFRESH)
+def price_panel():
+    import market_data  # lazy: only for the symbol config and trading windows
+
+    st.subheader("Market prices")
+    indicators = market_data.load_indicators()
+    ticks = storage.latest_ticks()
+    if not ticks:
+        st.info("No prices yet. The scheduler's price poller fills this: `python -m jobs.scheduler` "
+                "(needs TWELVE_DATA_API_KEY, ENABLE_YAHOO_FALLBACK=true or EIA_API_KEY in .env).")
+        return
+    now = datetime.now(timezone.utc)
+    since = storage.hours_ago(24)
+    for row_keys in (list(indicators)[:4], list(indicators)[4:]):
+        for col, key in zip(st.columns(4), row_keys):
+            cfg, tick = indicators[key], ticks.get(key)
+            with col.container(border=True):
+                if not tick:
+                    st.metric(f"{cfg['label']} ({cfg['unit']})", "n/a")
+                    st.caption("No data yet")
+                    continue
+                as_of = datetime.fromisoformat(tick["ts"])
+                age_min = (now - as_of).total_seconds() / 60
+                is_open = market_data.in_window(cfg["window"], now)
+                st.metric(f"{key} ({cfg['unit']})", _fmt_price(tick["price"], cfg["decimals"]),
+                          f"{tick['change_pct']:+.2f}%" if tick["change_pct"] is not None else None)
+                notes = [f"as of {as_of:%d %b %H:%M} UTC", tick["provider"]]
+                if tick["delayed_minutes"]:
+                    notes.append(f"delayed {tick['delayed_minutes']} min")
+                st.caption(" | ".join(notes))
+                if is_open and age_min > config.PRICE_STALE_MINUTES:
+                    st.caption(f":orange[Stale: last quote {age_min:.0f} min old]")
+                elif not is_open:
+                    st.caption("Outside trading hours (approximate)")
+                series = storage.price_series(key, since)
+                if len(series) > 1:
+                    st.line_chart(pd.DataFrame(series).set_index("ts")["price"], height=70)
+
+
+price_panel()
+
 history = storage.sentiment_history(30)
 latest = history[0] if history else None
 
@@ -101,16 +151,21 @@ if latest:
 st.header("Morning brief")
 brief = storage.latest_brief()
 if not brief:
-    st.info("No brief generated yet (daily at 05:30 desk time).")
-elif brief["status"] == "published":
-    st.caption(f"{brief['date']} | published | groundedness {brief['groundedness']:.2f}")
-    st.markdown(brief["text"])
+    st.info("Brief pending. The scheduler writes it daily at "
+            f"{config.BRIEF_HOUR:02d}:{config.BRIEF_MINUTE:02d} desk time, or catches up after "
+            f"{config.CATCHUP_AFTER_HOUR:02d}:{config.CATCHUP_AFTER_MINUTE:02d} if it was missed.")
 else:
-    st.warning(f"The brief for {brief['date']} failed evaluation and is held for analyst review. "
-               "It is not shown here.")
-    evaluation = json.loads(brief["eval_json"] or "{}")
-    for reason in evaluation.get("reasons", []):
-        st.write(f"- {reason}")
+    if brief["date"] < now_utc.date().isoformat():
+        st.info(f"Today's brief is pending. Showing the brief for {brief['date']}.")
+    if brief["status"] == "published":
+        st.caption(f"{brief['date']} | published | groundedness {brief['groundedness']:.2f}")
+        st.markdown(brief["text"])
+    else:
+        st.warning(f"The brief for {brief['date']} failed evaluation and is held for analyst review. "
+                   "It is not shown here.")
+        evaluation = json.loads(brief["eval_json"] or "{}")
+        for reason in evaluation.get("reasons", []):
+            st.write(f"- {reason}")
 
 # ---- verified feed and unverified panel -----------------------------------
 st.header("Verified feed (last 24h)")
@@ -133,8 +188,12 @@ with st.expander("Unverified / low-confidence (not used in the brief, sentiment 
 
 # ---- source health --------------------------------------------------------
 st.header("Source health")
-from jobs.source_health import SOURCE_HEALTH_CONFIG, current_streak  # noqa: E402
+from jobs.source_health import SOURCE_HEALTH_CONFIG, check_source_health, current_streak  # noqa: E402
 
+# notify=False: read-only, so a page load can never send an alert or write to job_runs.
+for job in check_source_health(notify=False):
+    st.warning(f"{SOURCE_HEALTH_CONFIG[job]['label']} has been degraded for "
+               f"{current_streak(job)} consecutive cycles.")
 cols = st.columns(len(SOURCE_HEALTH_CONFIG))
 for col, (job, cfg) in zip(cols, SOURCE_HEALTH_CONFIG.items()):
     streak = current_streak(job)

@@ -91,7 +91,7 @@ def fetch_eia_data():
     """Return {name: [(period, value), ...]} newest first. Empty dict on failure (logged as degraded)."""
     data, errors = {}, []
     try:
-        config.require("EIA_API_KEY")
+        config.require_keys("EIA_API_KEY")
         for name, (route, series, freq) in EIA_SERIES.items():
             try:
                 data[name] = _eia_series(route, series, freq)
@@ -237,7 +237,7 @@ def _get_run(run_id, token):
 def fetch_apify_commodity_news():
     """Run the actor with retry and backoff. Returns [] and logs 'degraded' if it stays unavailable."""
     try:
-        config.require("APIFY_TOKEN")
+        config.require_keys("APIFY_TOKEN")
     except RuntimeError as exc:
         storage.log_job("fetch_apify_commodity_news", "degraded", str(exc))
         return []
@@ -263,7 +263,7 @@ def fetch_apify_commodity_news():
 
 def serper_news(query, num=10):
     """News search. Keep num <= 10 (more costs 2 credits). Returns result list; raises on failure."""
-    config.require("SERPER_API_KEY")
+    config.require_keys("SERPER_API_KEY")
     resp = requests.post("https://google.serper.dev/news",
                          headers={"X-API-KEY": config.get("SERPER_API_KEY")},
                          json={"q": query, "num": num}, timeout=30)

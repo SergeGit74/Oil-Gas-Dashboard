@@ -74,6 +74,47 @@ CREATE TABLE IF NOT EXISTS run_costs (
     serper_credits INTEGER,
     details_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS run_claims (
+    job TEXT NOT NULL,
+    day TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt TEXT,
+    PRIMARY KEY (job, day)
+);
+
+CREATE TABLE IF NOT EXISTS price_ticks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    indicator_key TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    price REAL NOT NULL,
+    prev_close REAL,
+    change_pct REAL,
+    provider TEXT,
+    delayed_minutes INTEGER,
+    currency TEXT,
+    fetched_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_price_ticks_key_ts ON price_ticks(indicator_key, ts);
+
+CREATE TABLE IF NOT EXISTS price_daily (
+    indicator_key TEXT NOT NULL,
+    day TEXT NOT NULL,
+    open REAL,
+    high REAL,
+    low REAL,
+    close REAL,
+    n_ticks INTEGER,
+    provider TEXT,
+    PRIMARY KEY (indicator_key, day)
+);
+
+CREATE TABLE IF NOT EXISTS api_quota (
+    provider TEXT NOT NULL,
+    day_utc TEXT NOT NULL,
+    calls INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (provider, day_utc)
+);
 """
 
 # Columns added after the first schema version; added to older databases by init_db().
@@ -193,6 +234,98 @@ def latest_brief():
     return rows[0] if rows else None
 
 
+# ---- daily run claims -----------------------------------------------------
+
+def claim_daily_run(job, day, max_attempts=2, cooldown_min=30, now=None):
+    """Try to claim one attempt of `job` for `day`. True means the caller may run it now.
+
+    One atomic UPDATE: it succeeds only while attempts < max_attempts and the last attempt is older than the
+    cooldown, so two concurrent claimers cannot both win, a failing job is retried at most max_attempts times a
+    day, and retries are spaced by the cooldown."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(minutes=cooldown_min)).isoformat(timespec="seconds")
+    stamp = now.isoformat(timespec="seconds")
+    with connect() as conn:
+        conn.execute("INSERT OR IGNORE INTO run_claims (job, day, attempts, last_attempt) VALUES (?,?,0,NULL)",
+                     (job, day))
+        cur = conn.execute(
+            "UPDATE run_claims SET attempts = attempts + 1, last_attempt = ? "
+            "WHERE job = ? AND day = ? AND attempts < ? AND (last_attempt IS NULL OR last_attempt < ?)",
+            (stamp, job, day, max_attempts, cutoff))
+        return cur.rowcount == 1
+
+
+# ---- market prices --------------------------------------------------------
+
+def save_ticks(rows):
+    cols = ["indicator_key", "ts", "price", "prev_close", "change_pct", "provider", "delayed_minutes",
+            "currency", "fetched_at"]
+    with connect() as conn:
+        conn.executemany(f"INSERT INTO price_ticks ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                         [tuple(r.get(c) for c in cols) for r in rows])
+
+
+def latest_ticks():
+    """Newest tick (by quote time) per indicator, as {indicator_key: row}."""
+    rows = _rows("SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY indicator_key "
+                 "ORDER BY ts DESC, id DESC) AS rn FROM price_ticks) WHERE rn = 1")
+    return {r["indicator_key"]: r for r in rows}
+
+
+def last_fetch_times():
+    """{indicator_key: ISO time of the most recent successful fetch}. Used to decide what is due."""
+    return {r["indicator_key"]: r["t"] for r in
+            _rows("SELECT indicator_key, MAX(fetched_at) AS t FROM price_ticks GROUP BY indicator_key")}
+
+
+def price_series(indicator_key, since_iso):
+    return _rows("SELECT ts, price FROM price_ticks WHERE indicator_key = ? AND ts >= ? "
+                 "GROUP BY ts ORDER BY ts", (indicator_key, since_iso))
+
+
+def latest_daily(indicator_key, limit=30):
+    return _rows("SELECT * FROM price_daily WHERE indicator_key = ? ORDER BY day DESC LIMIT ?",
+                 (indicator_key, limit))
+
+
+def purge_ticks(retention_days=30, now=None):
+    """Roll every day still held as ticks into price_daily, then delete ticks of days older than the retention.
+
+    Only whole days are deleted (the cutoff is a UTC midnight), so a day is never rolled up from a partial set
+    after its first roll-up. Safe to run repeatedly. Returns (days_rolled_up, ticks_deleted)."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=retention_days)).date().isoformat()
+    days = {}
+    with connect() as conn:
+        for r in conn.execute("SELECT indicator_key, ts, price, provider FROM price_ticks ORDER BY ts, id"):
+            days.setdefault((r["indicator_key"], r["ts"][:10]), []).append(r)
+        for (key, day), ticks in days.items():
+            prices = [t["price"] for t in ticks]
+            conn.execute(
+                "INSERT OR REPLACE INTO price_daily (indicator_key, day, open, high, low, close, n_ticks, provider) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (key, day, prices[0], max(prices), min(prices), prices[-1], len(prices), ticks[-1]["provider"]))
+        deleted = conn.execute("DELETE FROM price_ticks WHERE substr(ts,1,10) < ?", (cutoff,)).rowcount
+    return len(days), deleted
+
+
+# ---- API quota ------------------------------------------------------------
+
+def reserve_quota(provider, day_utc, credits, cap):
+    """Atomically add `credits` to today's count unless that would exceed `cap`. True if reserved."""
+    with connect() as conn:
+        conn.execute("INSERT OR IGNORE INTO api_quota (provider, day_utc, calls) VALUES (?,?,0)",
+                     (provider, day_utc))
+        cur = conn.execute("UPDATE api_quota SET calls = calls + ? WHERE provider = ? AND day_utc = ? "
+                           "AND calls + ? <= ?", (credits, provider, day_utc, credits, cap))
+        return cur.rowcount == 1
+
+
+def quota_used(provider, day_utc):
+    rows = _rows("SELECT calls FROM api_quota WHERE provider = ? AND day_utc = ?", (provider, day_utc))
+    return rows[0]["calls"] if rows else 0
+
+
 # ---- job runs -------------------------------------------------------------
 
 def log_job(job_name, status, detail=""):
@@ -239,7 +372,7 @@ def save_run_cost(rec):
 def latest_marker():
     """Id of the newest finished run (any job except 'ask the desk'). Changes whenever a cycle completes,
     so the dashboard can tell cheaply that there is new data."""
-    rows = _rows("SELECT MAX(id) AS m FROM run_costs WHERE job_name NOT LIKE 'ask_desk%'")
+    rows = _rows("SELECT MAX(id) AS m FROM run_costs WHERE job_name NOT LIKE 'ask_desk%' AND job_name != 'price_poll'")
     return rows[0]["m"] or 0
 
 
@@ -250,7 +383,8 @@ def last_cycle_finished():
 
 
 def recent_run_costs(limit=20):
-    return _rows("SELECT * FROM run_costs ORDER BY id DESC LIMIT ?", (limit,))
+    # The price poller records a zero-cost run every few minutes; leave it out so real runs stay visible.
+    return _rows("SELECT * FROM run_costs WHERE job_name != 'price_poll' ORDER BY id DESC LIMIT ?", (limit,))
 
 
 def daily_costs(days=14):

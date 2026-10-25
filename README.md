@@ -62,15 +62,20 @@ jobs/scheduler.py (long-running process, APScheduler)
 |                    -> sentiment from stored last-24h verified articles -> EIA price check
 |                    -> save sentiment snapshot
 |    run_ingestion:  embed verified articles into the Chroma vector store (RAG)
-|    catch_up_brief: if past brief time and no brief for today, run run_evaluation
+|    catch_up_brief: past 06:00 desk time with no brief for today -> claim, then run_evaluation
 |    source_health:  consecutive-degradation alerts for Apify, Serper, EIA
 |
-|  daily 05:30  [one costed run: daily_brief_cycle]
+|  every 5 min  [one zero-cost run: price_poll]
+|    run_prices: due indicators -> Twelve Data / Yahoo / EIA fallback chain -> price_ticks
+|  daily 03:10: price_retention (roll ticks into price_daily, purge ticks older than 30 days)
+|
+|  daily 05:30  [one costed run: daily_brief_cycle, takes the same brief claim]
 |    run_evaluation -> check_eval_trend -> source_health -> check_sentiment_divergence
 |    then check_cost_budget (yesterday's total vs DAILY_COST_BUDGET_USD)
 |
 v
-storage.py (SQLite shared store: articles, briefs, sentiment_history, job_runs, run_costs)
+storage.py (SQLite shared store: articles, briefs, sentiment_history, job_runs, run_costs, run_claims,
+|           price_ticks, price_daily, api_quota)
 |
 v
 app.py (Streamlit, separate process, read-only against the store)
@@ -122,6 +127,13 @@ whole organization is rejected with a 400 asking for an `anthropic-workspace-id`
 | `BRIEF_HOUR`, `BRIEF_MINUTE` | `5`, `30` | Daily brief time in `DESK_TIMEZONE` |
 | `DATA_DIR` | project folder | Where the database, vector store and evaluation log live. Docker sets it to `/data` |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Model used for all Claude calls; prices are looked up by this id |
+| `CATCHUP_AFTER_HOUR`, `CATCHUP_AFTER_MINUTE` | brief time + 30 min (`6`, `0`) | Desk time from which a missed brief is generated |
+| `TWELVE_DATA_API_KEY` | unset | Twelve Data quotes (optional; see "Market prices") |
+| `ENABLE_YAHOO_FALLBACK` | `false` | Enables the unofficial Yahoo Finance endpoint |
+| `PRICE_PROVIDERS` | `twelvedata,yahoo,eia` | Order in which price providers are tried |
+| `PRICE_POLL_INTERVAL_MIN`, `PRICE_POLL_OFFHOURS_INTERVAL_MIN` | `5`, `60` | Poll interval inside / outside an instrument's trading window (lengthened automatically to fit quotas) |
+| `PRICE_TICK_RETENTION_DAYS`, `PRICE_STALE_MINUTES` | `30`, `30` | Days of ticks kept before they are rolled into `price_daily`; age after which an open-market tile is marked stale |
+| `TWELVE_DATA_MAX_PER_MIN` / `_PER_DAY`, `YAHOO_MAX_PER_MIN` / `_PER_DAY`, `EIA_MAX_PER_MIN` / `_PER_DAY` | `8`/`800`, `20`/`2000`, `10`/`500` | Provider limits in credits; calls stop at 90% of the daily figure |
 | `DAILY_COST_BUDGET_USD` | `10` | Daily total above which a budget alert fires |
 | `SONNET_INPUT_USD_PER_MTOK`, `SONNET_OUTPUT_USD_PER_MTOK` | `2.00`, `10.00` | Price overrides for the default model |
 | `ANTHROPIC_PRICE_MULTIPLIER` | `1.0` | For example 1.1 if you use US-only inference pricing |
@@ -272,12 +284,15 @@ authentication in front of it.
 | Collection cycle | Every 20 minutes | Collect, skip known articles, tag new ones, corroborate, compute sentiment and price confirmation, ingest verified articles, check source health |
 | Daily brief cycle | 05:30 in the desk timezone | Generate and evaluate the brief, check evaluation trend, source health, sentiment/price divergence, then check yesterday's cost against the budget |
 
-**Missed-brief catch-up.** Each collection cycle ends with `catch_up_brief` (in `jobs/scheduler.py`). If it is
-past `BRIEF_HOUR:BRIEF_MINUTE` in `DESK_TIMEZONE` and the `briefs` table has no row for today's date (the UTC
-date `run_evaluation` saves under), it runs `run_evaluation` and `check_eval_trend`. So a scheduler that was down
-at brief time produces the brief when it next starts or cycles. A brief flagged for review counts as present and
-is not regenerated; with no verified articles yet the attempt is skipped at no cost and retried next cycle. It
-does not rerun the source-health, divergence or budget checks.
+**Missed-brief catch-up.** `catch_up_brief` (in `jobs/scheduler.py`) runs at scheduler startup and after every
+collection cycle. Once the local time in `DESK_TIMEZONE` is past `CATCHUP_AFTER_HOUR:CATCHUP_AFTER_MINUTE` (06:00 by
+default, 30 minutes after the brief time) and the `briefs` table has no row for today's date (the UTC date
+`run_evaluation` saves under), it generates the brief. Any row counts as "the morning run happened", including one
+flagged for review, so a flagged brief is never regenerated. Both this and the scheduled 05:30 run first take a
+claim with `storage.claim_daily_run("daily_brief", day)`: at most 2 attempts a day, at least 30 minutes apart,
+and never two at once, so a failing run cannot loop and spend money. With no verified articles there is nothing to
+brief and no attempt is spent. The dashboard never starts the pipeline; it shows "Brief pending" until a brief
+exists. The catch-up does not rerun the source-health, divergence or budget checks.
 
 The scheduler's timezone, interval and brief time come from `DESK_TIMEZONE`, `COLLECTION_INTERVAL_MINUTES`,
 `BRIEF_HOUR` and `BRIEF_MINUTE` in `.env` (defaults: `Asia/Dubai`, 20, 05:30). The scheduler runs one
@@ -338,6 +353,11 @@ oil_gas_dashboard/
 ├── llm_pipeline.py           # source trust registry, news/commentary split, injection flags, tagging, brief generation
 ├── sentiment_analysis.py     # weighted Bull/Bear/Neutral aggregation, current_sentiment, divergence check
 ├── price_confirmation.py     # sentiment vs Brent price move: Confirmed/Partial/Divergent
+├── market_data.py            # price providers (Twelve Data, Yahoo, EIA), quota manager, trading windows, polling plan
+├── config/market_symbols.json # the 8 indicators: label, unit, currency, trading window, per-provider symbol
+├── scripts/check_symbols.py  # symbol discovery -> reports/symbol_check.json (generated, gitignored)
+├── tests/                    # pytest suite (mocked HTTP, throwaway database, network blocked)
+├── pytest.ini, requirements-dev.txt
 ├── rag_pipeline.py           # chunking, embeddings, recency-weighted retrieval, RAG answers
 ├── brief_evaluation.py       # claim decomposition, entailment, numeric and coverage checks
 ├── app.py                    # Streamlit dashboard (read-only against storage.py)
@@ -346,6 +366,7 @@ oil_gas_dashboard/
 │   ├── scheduler.py          # APScheduler orchestrator; wraps each cycle in cost_run
 │   ├── run_collection.py     # fetch, normalize, skip known, tag new, corroborate, sentiment, price check
 │   ├── run_ingestion.py      # embed verified articles into the vector store
+│   ├── run_prices.py         # price poll (fetch_prices) and the tick retention job
 │   ├── run_evaluation.py     # generate and evaluate the morning brief
 │   ├── check_eval_trend.py   # groundedness drift monitoring
 │   ├── source_health.py      # generic consecutive-degradation monitor (Apify, Serper, EIA)
@@ -363,6 +384,10 @@ oil_gas_dashboard/
 | `briefs` | One brief per day with status (`published` or `flagged_for_review`), groundedness score, evaluation JSON |
 | `sentiment_history` | One row per day: label, score, counts, price benchmark, price change, confirmation status |
 | `job_runs` | Status log for every job and source (`success`, `degraded`, `skipped`, `failed`, `alert`, `ok`) |
+| `run_claims` | `(job, day)` -> attempts and last attempt; lets a daily job run at most N times a day, spaced by a cooldown |
+| `price_ticks` | One row per fetched quote: indicator, quote time `ts`, price, previous close, change %, provider, `delayed_minutes`, `fetched_at`. Kept 30 days |
+| `price_daily` | Daily open/high/low/close per indicator, rolled up from ticks before they are purged |
+| `api_quota` | Credits used per provider per UTC day |
 | `run_costs` | One row per scheduled run: Claude, Apify and Serper cost, token and credit totals, and `details_json` with the per-step breakdown, counters and warnings |
 
 ## Skipping already-stored articles
@@ -498,6 +523,48 @@ snippets are short or missing for some sources).
 - **Degrade visibly, not silently**: source failures and unpriced models are logged and surfaced.
 - **No secrets in code**: credentials load from `.env` through `config.py`.
 
+## Market prices
+
+`jobs/run_prices.py` polls 8 indicators (Brent, WTI, Henry Hub, TTF, gold, DXY, S&P 500, ULSD) as its own scheduler
+job, separate from the news cycle, and the dashboard shows them as tiles with a 24-hour chart, the quote time, a
+"delayed N min" label when the provider reports one, and a stale marker. The tiles read only `price_ticks` and
+refresh every 60 seconds; the dashboard never calls a price provider.
+
+- **Providers**, tried in `PRICE_PROVIDERS` order, each indicator served by the first that returns a quote:
+  Twelve Data (needs `TWELVE_DATA_API_KEY`), Yahoo Finance (**unofficial** endpoint, off unless
+  `ENABLE_YAHOO_FALLBACK=true`; no published terms or limits, may change or stop, review its terms first), and EIA
+  daily spot for Brent and WTI (updates once a day and lags the calendar, so it is a last resort).
+- **Symbols** live in `config/market_symbols.json`. Run `python scripts/check_symbols.py` to test one call per
+  indicator and provider; it writes `reports/symbol_check.json` and never edits the symbol file. Keyed providers
+  without a key are skipped. This spends provider credits.
+- **Quota.** Credits are counted per symbol (Twelve Data documents one credit per symbol, including in a
+  multi-symbol request) in `api_quota`. A call is refused once it would pass 90% of the daily limit, requests are
+  split and paced to the per-minute limit, and the polling interval is lengthened automatically so the daily
+  quota cannot run out early (8 symbols on one 800/day provider means at least 16 minutes).
+- **Rate.** Every `PRICE_POLL_INTERVAL_MIN` (5) minutes inside an instrument's trading window, every
+  `PRICE_POLL_OFFHOURS_INTERVAL_MIN` (60) outside it. The windows in the JSON file are approximate weekly sessions
+  used only to choose the rate; they ignore holidays and daily breaks.
+- **Health.** Each poll logs `fetch_prices` to `job_runs` (`success`, `degraded` if any due indicator got no
+  quote, `skipped` if nothing was due), is registered in `SOURCE_HEALTH_CONFIG` (threshold 3), and records
+  per-provider call counters in the `price_poll` run. These runs cost nothing and are hidden from the dashboard's
+  run list and refresh marker.
+- **Retention.** A daily job at 03:10 rolls every day still held as ticks into `price_daily`, then deletes ticks
+  older than `PRICE_TICK_RETENTION_DAYS` (whole days only). It is safe to run repeatedly.
+- **Without keys.** The dashboard and the scheduler start with no paid keys. Steps that need a missing key degrade
+  or fail visibly in `job_runs`; with no price provider enabled, `fetch_prices` logs `degraded` with the reason.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+The suite uses a throwaway database, blank API keys and blocks non-loopback network connections, so it makes no
+real or paid calls. It covers the daily-run claim (concurrent claimers, attempt cap, cooldown), the brief catch-up
+(no brief, flagged brief, published brief), the three price providers with mocked responses, the fallback order,
+the 90% quota refusal, per-minute pacing, trading windows, tick retention, and dashboard rendering with no keys.
+
 ## Known gaps (verify before relying on the output)
 
 - **Working draft.** Expect further integration issues over longer runs. `requirements.txt` has lower bounds only;
@@ -507,6 +574,12 @@ snippets are short or missing for some sources).
   The configured model rejects forced tool choice (`tool_choice` of type `tool`), so tagging and evaluation offer
   the tool and instruct the model to call it. If a batch comes back without a tool call it is skipped (tagging
   retries next cycle; the evaluator marks unruled claims unsupported).
+- **Price feeds.** `scripts/check_symbols.py` resolved all 8 Yahoo candidates and the EIA Brent and WTI series on
+  2026-10-25 (a Sunday, so quotes were Friday's closes and no delay could be judged). Twelve Data was not tested (no
+  key); its Basic plan lists commodities data as excluded, so only gold is a candidate there and it is unconfirmed.
+  Twelve Data's limits (8 credits/min, 800/day) come from its pricing page; Yahoo's and EIA's limits in
+  `config.py` are conservative guesses, not published figures. Trading windows are approximate until a market
+  calendar is added. Yahoo's chart data used here carries no delay figure, so "delayed" appears only if one is reported.
 - **Price check uses lagging data.** EIA spot prices arrived about nine days behind the calendar in testing, so
   the Confirmed/Partial/Divergent status compares today's news sentiment with the move between the last two EIA
   observations, which may be from a different week. Treat it as indicative until a fresher price source is added.

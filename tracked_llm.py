@@ -10,7 +10,7 @@ _client = None
 def _get_client():
     global _client
     if _client is None:
-        config.require("ANTHROPIC_API_KEY")
+        config.require_keys("ANTHROPIC_API_KEY")
         # Keys that are not scoped to a workspace need the workspace id sent as a header.
         workspace_id = config.get("ANTHROPIC_WORKSPACE_ID")
         headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None

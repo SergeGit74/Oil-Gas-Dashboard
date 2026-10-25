@@ -29,7 +29,7 @@ def _coll():
 def _embed(texts, input_type):
     global _voyage
     if _voyage is None:
-        config.require("VOYAGE_API_KEY")
+        config.require_keys("VOYAGE_API_KEY")
         _voyage = voyageai.Client()
     vectors = []
     for i in range(0, len(texts), EMBED_BATCH):

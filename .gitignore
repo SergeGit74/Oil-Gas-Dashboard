@@ -199,3 +199,5 @@ dashboard_store.backup.db
 *.db-wal
 *.db-shm
 eval_history.jsonl
+reports/
+.pytest_cache/
