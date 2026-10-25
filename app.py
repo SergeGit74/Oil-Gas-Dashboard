@@ -1,6 +1,7 @@
-"""Streamlit dashboard. Reads from the shared store; the only write path is 'ask the desk',
-which is wrapped in cost_run so its Claude spend is recorded."""
+"""Streamlit dashboard. Reads from the shared store. Its only writes: 'ask the desk' (wrapped in cost_run so its
+Claude spend is recorded) and a plain insert of analyst feedback."""
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -12,6 +13,7 @@ import freshness
 import market_calendar
 import market_data
 import storage
+import story_cluster
 
 st.set_page_config(page_title="Oil & Gas Morning Intelligence", layout="wide")
 storage.init_db()
@@ -216,12 +218,21 @@ else:
 
 # ---- verified feed and unverified panel -----------------------------------
 st.header("Verified feed (last 24h)")
-verified = storage.verified_articles(storage.hours_ago(24), limit=100)
+verified_all = storage.verified_articles(storage.hours_ago(24), limit=400)
+verified = story_cluster.one_per_cluster(verified_all)[:100]  # one row per story, best-confidence article shown
 if verified:
-    df = pd.DataFrame(verified)[["title", "source", "category", "direction", "magnitude", "confidence",
-                                 "content_type", "url"]]
+    members = storage.cluster_members({a["cluster_id"] for a in verified if a.get("cluster_id")})
+    outlets = {}
+    for m in members:  # outlets that reported the story, counting verified articles only
+        if not m["flagged_injection"] and (m["confidence"] or 0) >= config.VERIFIED_MIN_CONFIDENCE:
+            outlets.setdefault(m["cluster_id"], set()).add(m["source"])
+    df = pd.DataFrame(verified)
+    df["reported by"] = [f"{len(outlets.get(a.get('cluster_id'), {a['source']}))} outlets" for a in verified]
+    df = df[["title", "source", "reported by", "category", "direction", "magnitude", "confidence", "content_type",
+             "url"]]
     st.dataframe(df, width="stretch", hide_index=True,
                  column_config={"url": st.column_config.LinkColumn("link")})
+    st.caption("One row per story: near-duplicate headlines are grouped, and sentiment counts each story once.")
 else:
     st.write("No verified articles in the last 24 hours.")
 
@@ -271,6 +282,35 @@ if daily:
         st.caption(f"Cost warning: {w}")
 else:
     st.write("No cost data yet.")
+
+# ---- analyst feedback -----------------------------------------------------
+# The one non-"ask the desk" write the dashboard makes: a plain, validated insert into `feedback`.
+with st.expander("Analyst feedback on tags and brief sections"):
+    kind = st.radio("What are you rating?", ["An article tag", "A brief section"], horizontal=True, key="fb_kind")
+    RATINGS = {"Agree / useful": "up", "Disagree / not useful": "down"}
+    if kind == "An article tag":
+        options = {f"{a['title'][:90]} [{a['source']}] - {a['direction']}": a["id"] for a in verified[:50]}
+        if not options:
+            st.write("No verified articles to rate yet.")
+        choice = st.selectbox("Article", list(options), key="fb_article") if options else None
+        label = st.selectbox("Correct direction (optional)", ["(no correction)"] + list(storage.FEEDBACK_LABELS),
+                             key="fb_label")
+        item = ("article_tag", options[choice]) if choice else None
+    else:
+        sections = [s for s in re.split(r"\n(?=## )", brief["text"] if brief and brief["status"] == "published" else "")
+                    if s.startswith("## ")]
+        names = {s.splitlines()[0][3:].strip(): s for s in sections}
+        if not names:
+            st.write("No published brief sections to rate yet.")
+        choice = st.selectbox("Section", list(names), key="fb_section") if names else None
+        label = "(no correction)"
+        item = ("brief_section", f"{brief['date']}#{choice}") if choice else None
+    rating = st.radio("Rating", list(RATINGS), horizontal=True, key="fb_rating")
+    comment = st.text_area("Comment (optional)", max_chars=storage.MAX_COMMENT_CHARS, key="fb_comment")
+    if st.button("Save feedback", disabled=item is None):
+        storage.add_feedback(item[0], item[1], RATINGS[rating], comment,
+                             None if label == "(no correction)" else label)
+        st.success("Feedback saved.")
 
 # ---- ask the desk ---------------------------------------------------------
 st.header("Ask the desk")

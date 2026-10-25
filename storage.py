@@ -28,6 +28,17 @@ CREATE TABLE IF NOT EXISTS articles (
 );
 CREATE INDEX IF NOT EXISTS idx_articles_collected ON articles(collected_at);
 
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_type TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    rating TEXT NOT NULL,
+    comment TEXT,
+    created_at TEXT,
+    analyst_label TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_item ON feedback(item_type, item_id);
+
 CREATE TABLE IF NOT EXISTS briefs (
     date TEXT PRIMARY KEY,
     created_at TEXT,
@@ -145,7 +156,9 @@ MIGRATIONS = {
         "direction": "TEXT", "magnitude": "INTEGER", "corroboration": "INTEGER DEFAULT 0",
         "flagged_injection": "INTEGER DEFAULT 0", "indexed": "INTEGER DEFAULT 0",
         "content_type": "TEXT", "source_tier": "TEXT",
+        "cluster_id": "INTEGER", "corroboration_json": "TEXT",
     },
+    "briefs": {"key_points_json": "TEXT"},
     "sentiment_history": {"price_value": "REAL"},
 }
 
@@ -178,6 +191,7 @@ def init_db():
             for col, decl in columns.items():
                 if col not in existing:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_articles_cluster ON articles(cluster_id)")
 
 
 def _rows(sql, params=()):
@@ -201,7 +215,7 @@ def known_urls(urls):
 def save_articles(rows):
     cols = ["url", "title", "source", "snippet", "published_at", "collected_at", "category", "direction",
             "magnitude", "confidence", "source_tier", "content_type", "corroboration", "reason",
-            "flagged_injection"]
+            "flagged_injection", "corroboration_json"]
     sql = f"INSERT OR IGNORE INTO articles ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})"
     with connect() as conn:
         conn.executemany(sql, [tuple(r.get(c) for c in cols) for r in rows])
@@ -226,6 +240,33 @@ def unverified_articles(since_iso, limit=50):
         (since_iso, config.VERIFIED_MIN_CONFIDENCE, limit))
 
 
+def articles_needing_cluster(since_iso):
+    """Articles collected since `since_iso` that have no cluster yet, in id order."""
+    return _rows("SELECT id, title, collected_at, cluster_id FROM articles WHERE cluster_id IS NULL "
+                 "AND collected_at >= ? ORDER BY id", (since_iso,))
+
+
+def clustered_articles_since(since_iso):
+    return _rows("SELECT id, title, collected_at, cluster_id FROM articles WHERE cluster_id IS NOT NULL "
+                 "AND collected_at >= ? ORDER BY id", (since_iso,))
+
+
+def set_clusters(assigned):
+    """assigned: {article_id: cluster_id}. Only fills rows that have no cluster, so it never rewrites one."""
+    with connect() as conn:
+        conn.executemany("UPDATE articles SET cluster_id = ? WHERE id = ? AND cluster_id IS NULL",
+                         [(c, i) for i, c in assigned.items()])
+
+
+def cluster_members(cluster_ids):
+    cluster_ids = list(cluster_ids)
+    if not cluster_ids:
+        return []
+    marks = ",".join("?" * len(cluster_ids))
+    return _rows(f"SELECT id, cluster_id, source, confidence, flagged_injection FROM articles "
+                 f"WHERE cluster_id IN ({marks})", cluster_ids)
+
+
 def unindexed_verified():
     return _rows("SELECT * FROM articles WHERE indexed = 0 AND flagged_injection = 0 AND confidence >= ?",
                  (config.VERIFIED_MIN_CONFIDENCE,))
@@ -238,12 +279,13 @@ def mark_indexed(ids):
 
 # ---- briefs ---------------------------------------------------------------
 
-def save_brief(date, status, groundedness, text, evaluation):
+def save_brief(date, status, groundedness, text, evaluation, key_points=None):
     with connect() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO briefs (date, created_at, status, groundedness, text, eval_json) "
-            "VALUES (?,?,?,?,?,?)",
-            (date, utcnow(), status, groundedness, text, json.dumps(evaluation)))
+            "INSERT OR REPLACE INTO briefs (date, created_at, status, groundedness, text, eval_json, key_points_json) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (date, utcnow(), status, groundedness, text, json.dumps(evaluation),
+             json.dumps(key_points) if key_points is not None else None))
 
 
 def brief_for_date(date):
@@ -408,6 +450,35 @@ def reserve_quota(provider, day_utc, credits, cap):
 def quota_used(provider, day_utc):
     rows = _rows("SELECT calls FROM api_quota WHERE provider = ? AND day_utc = ?", (provider, day_utc))
     return rows[0]["calls"] if rows else 0
+
+
+# ---- analyst feedback -----------------------------------------------------
+FEEDBACK_TYPES = ("article_tag", "brief_section")
+FEEDBACK_RATINGS = ("up", "down")
+FEEDBACK_LABELS = ("Bullish", "Bearish", "Neutral", "Mixed")
+MAX_COMMENT_CHARS = 1000
+
+
+def add_feedback(item_type, item_id, rating, comment="", analyst_label=None):
+    """The dashboard's only write: a plain insert, validated and length-capped."""
+    if item_type not in FEEDBACK_TYPES or rating not in FEEDBACK_RATINGS:
+        raise ValueError("invalid feedback type or rating")
+    if analyst_label not in (None, "") and analyst_label not in FEEDBACK_LABELS:
+        raise ValueError("invalid analyst label")
+    with connect() as conn:
+        conn.execute("INSERT INTO feedback (item_type, item_id, rating, comment, created_at, analyst_label) "
+                     "VALUES (?,?,?,?,?,?)",
+                     (item_type, str(item_id)[:200], rating, (comment or "")[:MAX_COMMENT_CHARS], utcnow(),
+                      analyst_label or None))
+
+
+def all_feedback():
+    return _rows("SELECT * FROM feedback ORDER BY id")
+
+
+def article_by_id(article_id):
+    rows = _rows("SELECT * FROM articles WHERE id = ?", (article_id,))
+    return rows[0] if rows else None
 
 
 # ---- job runs -------------------------------------------------------------

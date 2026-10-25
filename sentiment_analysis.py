@@ -1,6 +1,7 @@
 """Weighted Bull/Bear/Neutral aggregation over stored, verified, direction-tagged articles."""
 import alerts
 import storage
+import story_cluster
 
 DIRECTION_VALUE = {"Bullish": 1, "Bearish": -1, "Neutral": 0, "Mixed": 0}
 BULL_THRESHOLD = 0.15
@@ -24,8 +25,10 @@ def score_articles(articles):
 
 
 def current_sentiment(hours=24):
-    """Sentiment from stored verified articles first seen in the last `hours` hours."""
-    return score_articles(storage.verified_articles(storage.hours_ago(hours), directional_only=True))
+    """Sentiment from stored verified articles first seen in the last `hours` hours, counting one article per story
+    (cluster): the highest-confidence, then highest-magnitude one. `n` is the number of stories."""
+    articles = storage.verified_articles(storage.hours_ago(hours), directional_only=True)
+    return score_articles(story_cluster.one_per_cluster(articles))
 
 
 def check_sentiment_divergence():

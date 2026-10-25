@@ -61,6 +61,11 @@ STALE_PRICE_AMBER_MIN = int(os.getenv("STALE_PRICE_AMBER_MIN") or 3 * PRICE_POLL
 STALE_PRICE_RED_MIN = int(os.getenv("STALE_PRICE_RED_MIN") or 12 * PRICE_POLL_INTERVAL_MIN)
 STALE_BRIEF_RED_AFTER_MIN = int(os.getenv("STALE_BRIEF_RED_AFTER_MIN") or 180)  # amber past catch-up time, red this much later
 
+# ---- trust and quality (Phase 3) ----
+CLUSTER_SIMILARITY_THRESHOLD = float(os.getenv("CLUSTER_SIMILARITY_THRESHOLD") or 0.45)     # tuned on real titles (2026-10-25 sample)
+CORROBORATION_MIN_SIMILARITY = float(os.getenv("CORROBORATION_MIN_SIMILARITY") or 0.40)     # tuned with 8 Serper calls on 2026-10-25: title-to-title cosine
+BACKTEST_MIN_OBSERVATIONS = int(os.getenv("BACKTEST_MIN_OBSERVATIONS") or 30)
+
 QUOTA_SAFETY_FRACTION = 0.9  # refuse calls beyond this share of a provider's daily limit
 # provider -> (credits per minute, credits per day). Defaults are conservative guesses except Twelve Data's, which
 # is its published Basic plan (8/min, 800/day); override in .env if your plan differs.

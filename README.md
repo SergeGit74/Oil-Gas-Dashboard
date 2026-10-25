@@ -141,6 +141,9 @@ whole organization is rejected with a 400 asking for an `anthropic-workspace-id`
 | `STALE_COLLECTION_AMBER_MIN` / `_RED_MIN` | 2x / 4x the collection interval | Dashboard header: age of the last collection that turns amber / red |
 | `STALE_PRICE_AMBER_MIN` / `_RED_MIN` | 3x / 12x the price interval | Same for the last price fetch (judged only while a market is open) |
 | `STALE_BRIEF_RED_AFTER_MIN` | `180` | Minutes after the catch-up time with no brief before the header turns red (amber from the catch-up time) |
+| `CLUSTER_SIMILARITY_THRESHOLD` | `0.45` | Headline similarity (TF-IDF cosine) at which an article joins an existing story. Tuned on 2,371 real titles |
+| `CORROBORATION_MIN_SIMILARITY` | `0.40` | Title similarity a Serper result needs to count as corroboration. Tuned with 8 real Serper calls |
+| `BACKTEST_MIN_OBSERVATIONS` | `30` | Paired observations needed before the backtest shows statistics |
 | `DAILY_COST_BUDGET_USD` | `10` | Daily total above which a budget alert fires |
 | `SONNET_INPUT_USD_PER_MTOK`, `SONNET_OUTPUT_USD_PER_MTOK` | `2.00`, `10.00` | Price overrides for the default model |
 | `ANTHROPIC_PRICE_MULTIPLIER` | `1.0` | For example 1.1 if you use US-only inference pricing |
@@ -360,12 +363,18 @@ oil_gas_dashboard/
 ├── llm_pipeline.py           # source trust registry, news/commentary split, injection flags, tagging, brief generation
 ├── sentiment_analysis.py     # weighted Bull/Bear/Neutral aggregation, current_sentiment, divergence check
 ├── price_confirmation.py     # sentiment vs Brent price move: Confirmed/Partial/Divergent
+├── story_cluster.py          # local TF-IDF headline similarity and story clustering (no API cost)
+├── key_points.py             # per-brief key points and the deterministic day-over-day diff
+├── backtest.py               # descriptive sentiment-vs-Brent-return backtest (no look-ahead)
+├── feedback_tools.py         # golden-set export and tagger-agreement report
+├── pages/1_Research.py       # dashboard page: the backtest (read-only)
 ├── market_calendar.py        # open / closed / holiday per indicator (exchange_calendars), market-status line
 ├── event_calendar.py         # events table: manual YAML + EIA release schedules; Watch-today text
 ├── freshness.py              # dashboard header: collection / price / brief age with amber and red levels
 ├── market_data.py            # price providers (Twelve Data, Yahoo, EIA), quota manager, trading windows, polling plan
 ├── config/market_symbols.json # the 8 indicators: label, unit, currency, calendar code, fallback window, per-provider symbol
 ├── config/events.yaml        # manual scheduled events (FOMC dates; add OPEC+ meetings by hand)
+├── scripts/backtest_sentiment.py, export_golden_set.py, tagger_agreement.py  # CLIs for the three tools above
 ├── scripts/check_symbols.py  # symbol discovery -> reports/symbol_check.json (generated, gitignored)
 ├── tests/                    # pytest suite (mocked HTTP, throwaway database, network blocked)
 ├── pytest.ini, requirements-dev.txt
@@ -392,8 +401,8 @@ oil_gas_dashboard/
 
 | Table | Contents |
 |---|---|
-| `articles` | Tagged articles: category, direction, magnitude, confidence, reason, content type. `collected_at` is the time the article was first seen |
-| `briefs` | One brief per day with status (`published` or `flagged_for_review`), groundedness score, evaluation JSON |
+| `articles` | Tagged articles: category, direction, magnitude, confidence, reason, content type. `collected_at` is the time the article was first seen. `cluster_id` groups near-duplicate headlines (the id of the story's first article); `corroboration_json` lists the trusted-source results that matched |
+| `briefs` | One brief per day with status (`published` or `flagged_for_review`), groundedness score, evaluation JSON, and `key_points_json` (top stories, sentiment, prices) used for the next day's comparison |
 | `sentiment_history` | One row per day: label, score, counts, price benchmark, price change, confirmation status |
 | `job_runs` | Status log for every job and source (`success`, `degraded`, `skipped`, `failed`, `alert`, `ok`) |
 | `run_claims` | `(job, day)` -> attempts and last attempt; lets a daily job run at most N times a day, spaced by a cooldown |
@@ -401,6 +410,7 @@ oil_gas_dashboard/
 | `price_daily` | Daily open/high/low/close per indicator, rolled up from ticks before they are purged |
 | `eia_weekly` | Weekly EIA series (crude stocks, distillate stocks, Lower 48 gas storage): series, period, value, unit |
 | `events` | Scheduled events: date, time, tz, title, category, source_url, source. Unique on (date, time, title) |
+| `feedback` | Analyst feedback: item_type (`article_tag` or `brief_section`), item_id, rating (`up`/`down`), comment, analyst_label (corrected direction), created_at |
 | `api_quota` | Credits used per provider per UTC day |
 | `run_costs` | One row per scheduled run: Claude, Apify and Serper cost, token and credit totals, and `details_json` with the per-step breakdown, counters and warnings |
 
@@ -600,6 +610,44 @@ refresh every 60 seconds; the dashboard never calls a price provider.
   days; the prompt says so, gives "none" when the table has none, and the same text is in the evaluator's trusted
   reference data. Nothing deterministic enforces it after generation, so the evaluator is the check.
 
+## Trust and quality
+
+- **Story clustering.** `story_cluster.py` groups near-duplicate headlines with a local TF-IDF cosine similarity
+  (numpy only, no API call, no cost). Each new article joins the cluster of its most similar article from the
+  previous 24 hours if the similarity reaches `CLUSTER_SIMILARITY_THRESHOLD` (0.45, chosen by reading pairs from
+  your stored titles: at 0.40-0.45 the pairs were still the same event; below 0.40 related but different stories
+  start to mix). Clusters are never merged afterwards, and the id is the earliest member's, so it is stable.
+  Embeddings were not needed. On the 2,371 stored articles this gave 1,249 stories (the largest, one event, had
+  215 outlets). Sentiment counts one article per story (highest confidence, then highest magnitude), so its `n` is
+  the number of stories. The verified feed shows one row per story with "reported by N outlets". The brief's own
+  source list is **not** deduplicated yet.
+- **Corroboration.** A Serper result counts only if its site is in a trusted tier, it is not the article's own
+  outlet, and its **title** is similar enough to the article's headline (`CORROBORATION_MIN_SIMILARITY`, 0.40).
+  Title and snippet together matched unrelated pages too often in the calibration sample, so only titles are
+  compared. Several results from one outlet count once. The matches (site, url, title, similarity) are saved in
+  `articles.corroboration_json`. Trusted domains now match by whole-label suffix, so `uk.reuters.com` matches
+  `reuters.com` but `notreuters.com` does not; this applies to every tier lookup, not just corroboration, and
+  stored articles are not re-tiered.
+- **Backtest.** `backtest.py`, `scripts/backtest_sentiment.py` and the dashboard's **Research** page (a Streamlit
+  page in the sidebar) compare each completed day's final sentiment with the Brent return from that day's
+  `price_daily` close to the next and to the third available close. Weekends and holidays are skipped because
+  `price_daily` only has days with quotes. No look-ahead: no price from before the sentiment day is used, today's
+  row is excluded, and a return is dropped if its close is too far away or from a different provider than the
+  entry close. It reports correlation and hit rate by label, and "insufficient data" under
+  `BACKTEST_MIN_OBSERVATIONS` (30) paired observations. It is descriptive, not predictive, and says so on the page.
+- **What changed since yesterday.** Each brief stores key points (top verified stories, sentiment, latest prices).
+  `key_points.py` compares today with yesterday's stored key points in code: new and dropped top stories (matched by
+  title similarity), the sentiment change and the price changes. The model only phrases that block in a "What
+  changed since yesterday" section and may not add facts; the block is also in the evaluator's trusted reference
+  text. If yesterday's brief is missing, or was stored before key points existed, code writes "Yesterday's brief is
+  not available..." instead.
+- **Analyst feedback.** The dashboard's "Analyst feedback" panel inserts a rating (agree / disagree), an optional
+  corrected direction and a comment (max 1,000 characters) for a verified article's tag or a section of the published
+  brief into `feedback`. This is the only write the dashboard makes besides "ask the desk". `python
+  scripts/export_golden_set.py` writes `reports/golden_set.csv`; `python scripts/tagger_agreement.py` reports how
+  often the model's direction matches the analysts (the latest feedback per article wins; a thumbs-down without a
+  correction is counted separately).
+
 ## Tests
 
 ```bash
@@ -612,7 +660,10 @@ real or paid calls. It covers the daily-run claim (concurrent claimers, attempt 
 (no brief, flagged brief, published brief), the three price providers with mocked responses, the fallback order,
 the 90% quota refusal, per-minute pacing, trading windows, tick retention, `market_status` on a weekend, a holiday and a normal day, the spread math, EIA weekly storage and
 gating, the EIA schedule parsers, event loading (idempotent; a bad page keeps old rows), the brief prompt containing
-only table events, the freshness levels, and dashboard rendering with no keys.
+only table events, the freshness levels, and dashboard rendering with no keys; story clustering (duplicates merge,
+distinct stories and day-apart repeats do not), one-per-story sentiment, subdomain trust matching, corroboration
+by content, backtest alignment without look-ahead, the day-over-day diff (including a missing yesterday), and
+feedback validation, export, agreement and the dashboard form.
 
 ## Known gaps (verify before relying on the output)
 
@@ -634,6 +685,13 @@ only table events, the freshness levels, and dashboard rendering with no keys.
   calendar page on 2026-10-25 and carry no time (the page gives none). No OPEC+ date could be confirmed on an
   official OPEC page (the site refused the fetcher), so the OPEC+ list is empty until you add dates by hand. The EIA
   schedules are parsed from HTML text and can break when EIA changes a page.
+- **Phase 3 limits.** The clustering and corroboration thresholds were tuned on small samples (one day's stories, 8
+  Serper queries) and will need rechecking. Corroboration is conservative: it missed some genuine rewrites
+  (title similarity 0.2-0.3), which only weakens verification. Serper charged 1 credit per call in the 8 test
+  calls, matching the code's assumption. The backtest shows no statistics yet: `price_daily` fills only from the
+  price poller, so about 30 paired days are needed. Key points use the latest quote at brief time, which on a
+  weekend is Friday's close (the diff says 'unchanged' when the quote time is the same). Cluster ids exist only
+  for articles collected in the last 48 hours when the feature first ran.
 - **Price check uses lagging data.** EIA spot prices arrived about nine days behind the calendar in testing, so
   the Confirmed/Partial/Divergent status compares today's news sentiment with the move between the last two EIA
   observations, which may be from a different week. Treat it as indicative until a fresher price source is added.

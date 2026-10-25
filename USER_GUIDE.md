@@ -47,6 +47,11 @@ you do not need to activate it.
   tile says "Closed, last close <date>" instead of showing a move. The page also lists EIA weekly stocks and gas
   storage and the next 7 days of scheduled events (EIA releases, FOMC). OPEC+ meetings only appear if you add them
   to `config/events.yaml` with a source link.
+- The verified feed shows one row per story ("reported by N outlets") and sentiment counts each story once. Use the
+  **Analyst feedback** panel near the bottom to mark a tag or brief section right or wrong (optionally with the
+  correct direction); `python scripts/tagger_agreement.py` and `python scripts/export_golden_set.py` summarise it.
+  The **Research** page (sidebar) compares past sentiment with Brent's next moves; it needs about 30 days of both
+  and is descriptive only. From the second day on, the brief has a "What changed since yesterday" section.
 - **Stop** either program with **Ctrl+C** in its window.
 - After any code change, stop and restart the program; running programs keep the old code.
 - Start only one scheduler and one dashboard. Two schedulers double the cost; a second dashboard moves to port 8502.

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An oil and gas morning-intelligence system: a scheduler collects and tags news, a SQLite store holds the results,
 and a Streamlit dashboard reads them. `README.md` has the full design and known gaps; `USER_GUIDE.md` is the
 operator guide. The project runs on Windows with a project-local `venv/`; it has a git repo and a pytest suite
-(`tests/`), and no linter configured. `CLAUDE_CODE_TASKS.md` is the phased task brief (Phases 0-2 are done).
+(`tests/`), and no linter configured. `CLAUDE_CODE_TASKS.md` is the phased task brief (Phases 0-3 are done).
 
 ## Commands
 
@@ -110,9 +110,22 @@ to `config.py`: the module wins on import, and a test guards that.
   unverified panel.
 - Confidence = tier base (`TRUST_REGISTRY`: official 0.95, wire_trade 0.80, aggregator 0.60, unknown 0.35),
   x0.7 for commentary, +0.10 per corroborating trusted domain (max 2).
-- `TRUST_REGISTRY` matches exact domains only (`uk.reuters.com` != `reuters.com`). The `wire_trade` tier also
+- `TRUST_REGISTRY` matches by whole-label domain suffix (`uk.reuters.com` matches `reuters.com`; `notreuters.com`
+  does not): use `llm_pipeline.source_tier` / `site_key`, never compare domains by hand. The `wire_trade` tier also
   serves as the Serper corroboration set, so adding a weak outlet there weakens verification. Changing the
-  registry does not re-tier stored rows; that needs a one-off update of `articles.source_tier` and `confidence`.
+  registry or the matching does not re-tier stored rows; that needs a one-off update of `articles.source_tier` and
+  `confidence` (not done for the existing rows).
+- Corroboration counts a Serper result only if its site is trusted, is not the article's own outlet, and its title
+  is similar to the article's headline (`CORROBORATION_MIN_SIMILARITY`, title-to-title only; titles plus snippets
+  matched unrelated pages in calibration). Matches are kept in `articles.corroboration_json`.
+- Story clustering (`story_cluster.py`, local TF-IDF, free): `articles.cluster_id` groups near-duplicate headlines
+  within 24 h; `cluster_new_articles()` runs after each save and only fills empty ids. Sentiment must go through
+  `story_cluster.one_per_cluster` so each story counts once. The brief's source list is not deduplicated (its
+  numbering is shared with the evaluator).
+- Key points and "what changed": `briefs.key_points_json` is written by `run_evaluation`; the diff is computed in
+  code (`key_points.py`) and the model only phrases it. Anything new in the prompt also goes in the evaluator
+  `context`. The backtest (`backtest.py`) must stay free of look-ahead and must say "insufficient data" under 30
+  observations. The dashboard's only writes are "ask the desk" and `storage.add_feedback` (validated plain insert).
 - Scraped text is data: it is wrapped in `<article>`/`<source>` tags in prompts with instructions not to obey it.
 
 ### Cost accounting

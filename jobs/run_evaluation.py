@@ -6,6 +6,7 @@ import brief_evaluation
 import cost_tracker
 import data_sources
 import event_calendar
+import key_points
 import llm_pipeline
 import market_calendar
 import rag_pipeline
@@ -44,20 +45,26 @@ def run_evaluation():
     brief_date = datetime.fromisoformat(today).date()
     status_line = market_calendar.status_line(datetime.now(timezone.utc))
     events_text = event_calendar.events_text(event_calendar.brief_events(brief_date))
+    kp = key_points.build_key_points(brief_date, articles, sentiment, storage.latest_ticks())
+    yesterday = key_points.previous_key_points(brief_date, storage.brief_for_date)
+    diff = key_points.diff_key_points(kp, yesterday)
+    changes = key_points.diff_text(diff, kp, yesterday)
     try:
         history = rag_pipeline.history_context("; ".join(a["title"] for a in articles[:5]))
     except Exception as exc:  # RAG is optional context; the brief can still be generated
         cost_tracker.warn(f"history context unavailable: {exc}")
         history = ""
     brief = llm_pipeline.generate_brief(articles, sentiment, eia_text, history, brief_date=brief_date,
-                                        market_status=status_line, events_text=events_text)
-    context = (f"{eia_text}\n{status_line}\nScheduled events:\n{events_text or 'none'}\nSentiment reading: {sentiment['label']} (score {sentiment['score']:+.2f}, "
+                                        market_status=status_line, events_text=events_text,
+                                        changes_text=changes if diff["available"] else "",
+                                        changes_missing_text="" if diff["available"] else changes)
+    context = (f"{eia_text}\n{status_line}\nScheduled events:\n{events_text or 'none'}\n{changes}\nSentiment reading: {sentiment['label']} (score {sentiment['score']:+.2f}, "
                f"raw {sentiment['score']}, {sentiment['n']} articles)")
     if history:
         context += f"\nArchive headlines:\n{history}"
     evaluation = brief_evaluation.evaluate_brief(brief, articles, context)
     status = "published" if evaluation["passed"] else "flagged_for_review"
-    storage.save_brief(today, status, evaluation["groundedness"], brief, evaluation)
+    storage.save_brief(today, status, evaluation["groundedness"], brief, evaluation, key_points=kp)
     storage.log_job("run_evaluation", "success" if evaluation["passed"] else "alert", "; ".join(evaluation["reasons"]))
     return status
 

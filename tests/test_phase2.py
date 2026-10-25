@@ -232,7 +232,7 @@ def test_run_evaluation_passes_market_status_and_table_events(db, monkeypatch):
     monkeypatch.setattr(run_evaluation.sentiment_analysis, "current_sentiment", lambda: SENT)
     monkeypatch.setattr(run_evaluation.rag_pipeline, "history_context", lambda q: "")
 
-    def fake_generate(articles, sentiment, eia, history, brief_date, market_status, events_text):
+    def fake_generate(articles, sentiment, eia, history, brief_date, market_status, events_text, **kwargs):
         seen.update(market_status=market_status, events_text=events_text)
         return "# t\n\nbody"
 
