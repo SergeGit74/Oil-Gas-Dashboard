@@ -1,5 +1,7 @@
 """Long-running APScheduler process. Each cycle runs inside one cost_run."""
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -28,10 +30,30 @@ def _step(name, fn):
         cost_tracker.warn(f"{name} failed: {exc}")
 
 
+def catch_up_brief():
+    """Create today's brief if the scheduled run was missed (scheduler was down at brief time).
+
+    Runs only after the brief time in the desk timezone and only when no brief exists for today's
+    date (the same UTC date key run_evaluation saves under). A flagged brief counts as present, so
+    it is not regenerated. If there are no verified articles yet, run_evaluation skips at no cost
+    and this retries next cycle.
+    """
+    now = datetime.now(ZoneInfo(TIMEZONE))
+    if (now.hour, now.minute) < (config.BRIEF_HOUR, config.BRIEF_MINUTE):
+        return
+    if storage.brief_for_date(storage.utcnow()[:10]):
+        return
+    log.info("No brief for today and the %02d:%02d run has passed; generating it now.",
+             config.BRIEF_HOUR, config.BRIEF_MINUTE)
+    if _step("run_evaluation", run_evaluation):
+        _step("check_eval_trend", check_eval_trend)
+
+
 def collection_cycle():
     with cost_tracker.cost_run("collection_cycle"):
         _step("run_collection", run_collection)
         _step("run_ingestion", run_ingestion)
+        _step("catch_up_brief", catch_up_brief)
         _step("source_health", check_source_health)
 
 

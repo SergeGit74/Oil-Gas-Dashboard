@@ -183,6 +183,11 @@ def save_brief(date, status, groundedness, text, evaluation):
             (date, utcnow(), status, groundedness, text, json.dumps(evaluation)))
 
 
+def brief_for_date(date):
+    rows = _rows("SELECT * FROM briefs WHERE date = ?", (date,))
+    return rows[0] if rows else None
+
+
 def latest_brief():
     rows = _rows("SELECT * FROM briefs ORDER BY date DESC LIMIT 1")
     return rows[0] if rows else None
