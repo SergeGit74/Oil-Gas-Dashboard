@@ -125,9 +125,10 @@ def build_brief_message(brief, to_addrs, sender=None):
                        "SOURCES", *source_lines, "", DISCLAIMER])
     html_body = (
         f"<p><strong>Status:</strong> {html.escape(status)}<br><strong>Generated:</strong> {html.escape(generated)}</p>\n"
-        f"{md_to_html(brief['text'])}\n<h3>Price snapshot</h3>\n<p><small>Latest quotes when the brief was generated</small></p>\n"
-        f"<ul>{''.join(f'<li>{html.escape(l)}</li>' for l in price_lines)}</ul>\n<h3>Sources</h3>\n"
-        f"<ol style=\"list-style:none;padding-left:0\">{''.join(f'<li>{html.escape(l)}</li>' for l in source_lines)}</ol>\n"
+        f"{md_to_html(brief['text'])}\n<h3>Price snapshot</h3>\n"
+        f"<p><small>Latest quotes when the brief was generated</small></p>\n"
+        f"<ul>{''.join(f'<li>{html.escape(line)}</li>' for line in price_lines)}</ul>\n<h3>Sources</h3>\n"
+        f"<ol style=\"list-style:none;padding-left:0\">{''.join(f'<li>{html.escape(line)}</li>' for line in source_lines)}</ol>\n"
         f"<p><small>{html.escape(DISCLAIMER)}</small></p>")
     return _message(f"Morning Intelligence Brief {brief['date']}", to_addrs, plain, html_body, sender)
 

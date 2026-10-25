@@ -1,186 +1,16 @@
-"""SQLite shared store between the scheduler and the dashboard."""
+"""Shared store between the scheduler and the dashboard: SQLite by default, PostgreSQL when DATABASE_URL is set.
+
+All SQL here is written once, in a dialect both backends accept (see db.py): `?` placeholders, ON CONFLICT upserts
+and portable queries. The schema lives in migrations.py.
+"""
 import json
-import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import config
+import db
+import migrations
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS articles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url TEXT UNIQUE NOT NULL,
-    title TEXT,
-    source TEXT,
-    snippet TEXT,
-    published_at TEXT,
-    collected_at TEXT,
-    category TEXT,
-    direction TEXT,
-    magnitude INTEGER,
-    confidence REAL,
-    source_tier TEXT,
-    content_type TEXT,
-    corroboration INTEGER DEFAULT 0,
-    reason TEXT,
-    flagged_injection INTEGER DEFAULT 0,
-    indexed INTEGER DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_articles_collected ON articles(collected_at);
-
-CREATE TABLE IF NOT EXISTS alert_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cluster_key TEXT NOT NULL UNIQUE,
-    article_id INTEGER,
-    title TEXT,
-    source TEXT,
-    magnitude INTEGER,
-    direction TEXT,
-    status TEXT NOT NULL,
-    created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS email_log (
-    day TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    recipients INTEGER,
-    sent_at TEXT,
-    PRIMARY KEY (day, kind)
-);
-
-CREATE TABLE IF NOT EXISTS feedback (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    item_type TEXT NOT NULL,
-    item_id TEXT NOT NULL,
-    rating TEXT NOT NULL,
-    comment TEXT,
-    created_at TEXT,
-    analyst_label TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_feedback_item ON feedback(item_type, item_id);
-
-CREATE TABLE IF NOT EXISTS briefs (
-    date TEXT PRIMARY KEY,
-    created_at TEXT,
-    status TEXT,
-    groundedness REAL,
-    text TEXT,
-    eval_json TEXT
-);
-
-CREATE TABLE IF NOT EXISTS sentiment_history (
-    date TEXT PRIMARY KEY,
-    label TEXT,
-    score REAL,
-    n_articles INTEGER,
-    counts_json TEXT,
-    price_benchmark TEXT,
-    price_value REAL,
-    price_change_pct REAL,
-    confirmation TEXT,
-    updated_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS job_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_name TEXT,
-    status TEXT,
-    detail TEXT,
-    created_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_job_runs_name ON job_runs(job_name, id);
-
-CREATE TABLE IF NOT EXISTS run_costs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_name TEXT,
-    started_at TEXT,
-    finished_at TEXT,
-    status TEXT,
-    claude_usd REAL,
-    apify_usd REAL,
-    serper_usd REAL,
-    total_usd REAL,
-    input_tokens INTEGER,
-    output_tokens INTEGER,
-    serper_credits INTEGER,
-    details_json TEXT
-);
-
-CREATE TABLE IF NOT EXISTS run_claims (
-    job TEXT NOT NULL,
-    day TEXT NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    last_attempt TEXT,
-    PRIMARY KEY (job, day)
-);
-
-CREATE TABLE IF NOT EXISTS price_ticks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    indicator_key TEXT NOT NULL,
-    ts TEXT NOT NULL,
-    price REAL NOT NULL,
-    prev_close REAL,
-    change_pct REAL,
-    provider TEXT,
-    delayed_minutes INTEGER,
-    currency TEXT,
-    fetched_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_price_ticks_key_ts ON price_ticks(indicator_key, ts);
-
-CREATE TABLE IF NOT EXISTS price_daily (
-    indicator_key TEXT NOT NULL,
-    day TEXT NOT NULL,
-    open REAL,
-    high REAL,
-    low REAL,
-    close REAL,
-    n_ticks INTEGER,
-    provider TEXT,
-    PRIMARY KEY (indicator_key, day)
-);
-
-CREATE TABLE IF NOT EXISTS eia_weekly (
-    series_key TEXT NOT NULL,
-    period TEXT NOT NULL,
-    value REAL NOT NULL,
-    unit TEXT,
-    fetched_at TEXT,
-    PRIMARY KEY (series_key, period)
-);
-
-CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    time TEXT,
-    tz TEXT,
-    title TEXT NOT NULL,
-    category TEXT,
-    source_url TEXT,
-    source TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_events ON events(date, COALESCE(time, ''), title);
-
-CREATE TABLE IF NOT EXISTS api_quota (
-    provider TEXT NOT NULL,
-    day_utc TEXT NOT NULL,
-    calls INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (provider, day_utc)
-);
-"""
-
-# Columns added after the first schema version; added to older databases by init_db().
-MIGRATIONS = {
-    "articles": {
-        "direction": "TEXT", "magnitude": "INTEGER", "corroboration": "INTEGER DEFAULT 0",
-        "flagged_injection": "INTEGER DEFAULT 0", "indexed": "INTEGER DEFAULT 0",
-        "content_type": "TEXT", "source_tier": "TEXT",
-        "cluster_id": "INTEGER", "corroboration_json": "TEXT",
-    },
-    "briefs": {"key_points_json": "TEXT", "sources_json": "TEXT"},
-    "sentiment_history": {"price_value": "REAL"},
-}
+connect = db.connect
 
 
 def utcnow():
@@ -191,27 +21,12 @@ def hours_ago(hours):
     return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
 
 
-@contextmanager
-def connect():
-    conn = sqlite3.connect(config.DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def init_db():
+    """Bring the schema up to date. A no-op (one small read) when every migration is already applied."""
     with connect() as conn:
-        conn.executescript(SCHEMA)
-        for table, columns in MIGRATIONS.items():
-            existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
-            for col, decl in columns.items():
-                if col not in existing:
-                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_articles_cluster ON articles(cluster_id)")
+        if {v for v, _, _ in migrations.MIGRATIONS} <= migrations.applied_versions(conn):
+            return
+        migrations.migrate(conn)
 
 
 def _rows(sql, params=()):
@@ -236,7 +51,7 @@ def save_articles(rows):
     cols = ["url", "title", "source", "snippet", "published_at", "collected_at", "category", "direction",
             "magnitude", "confidence", "source_tier", "content_type", "corroboration", "reason",
             "flagged_injection", "corroboration_json"]
-    sql = f"INSERT OR IGNORE INTO articles ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})"
+    sql = db.upsert_sql("articles", cols)  # a URL already stored is ignored
     with connect() as conn:
         conn.executemany(sql, [tuple(r.get(c) for c in cols) for r in rows])
 
@@ -245,7 +60,7 @@ def verified_articles(since_iso, directional_only=False, limit=None):
     sql = ("SELECT * FROM articles WHERE collected_at >= ? AND flagged_injection = 0 AND confidence >= ?")
     if directional_only:
         sql += " AND direction IS NOT NULL"
-    sql += " ORDER BY magnitude DESC, collected_at DESC"
+    sql += " ORDER BY magnitude DESC NULLS LAST, collected_at DESC"
     params = [since_iso, config.VERIFIED_MIN_CONFIDENCE]
     if limit:
         sql += " LIMIT ?"
@@ -303,8 +118,8 @@ def save_brief(date, status, groundedness, text, evaluation, key_points=None, so
     """sources: the numbered source list the brief cites, [{"n", "title", "source", "url"}, ...]."""
     with connect() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO briefs (date, created_at, status, groundedness, text, eval_json, key_points_json, "
-            "sources_json) VALUES (?,?,?,?,?,?,?,?)",
+            db.upsert_sql("briefs", ["date", "created_at", "status", "groundedness", "text", "eval_json",
+                                     "key_points_json", "sources_json"], ["date"]),
             (date, utcnow(), status, groundedness, text, json.dumps(evaluation),
              json.dumps(key_points) if key_points is not None else None,
              json.dumps(sources) if sources is not None else None))
@@ -332,8 +147,8 @@ def claim_daily_run(job, day, max_attempts=2, cooldown_min=30, now=None):
     cutoff = (now - timedelta(minutes=cooldown_min)).isoformat(timespec="seconds")
     stamp = now.isoformat(timespec="seconds")
     with connect() as conn:
-        conn.execute("INSERT OR IGNORE INTO run_claims (job, day, attempts, last_attempt) VALUES (?,?,0,NULL)",
-                     (job, day))
+        conn.execute("INSERT INTO run_claims (job, day, attempts, last_attempt) VALUES (?,?,0,NULL) "
+                     "ON CONFLICT DO NOTHING", (job, day))
         cur = conn.execute(
             "UPDATE run_claims SET attempts = attempts + 1, last_attempt = ? "
             "WHERE job = ? AND day = ? AND attempts < ? AND (last_attempt IS NULL OR last_attempt < ?)",
@@ -354,7 +169,7 @@ def save_ticks(rows):
 def latest_ticks():
     """Newest tick (by quote time) per indicator, as {indicator_key: row}."""
     rows = _rows("SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY indicator_key "
-                 "ORDER BY ts DESC, id DESC) AS rn FROM price_ticks) WHERE rn = 1")
+                 "ORDER BY ts DESC, id DESC) AS rn FROM price_ticks) AS ranked WHERE rn = 1")
     return {r["indicator_key"]: r for r in rows}
 
 
@@ -365,8 +180,9 @@ def last_fetch_times():
 
 
 def price_series(indicator_key, since_iso):
-    return _rows("SELECT ts, price FROM price_ticks WHERE indicator_key = ? AND ts >= ? "
-                 "GROUP BY ts ORDER BY ts", (indicator_key, since_iso))
+    # One point per quote time (the newest row if several providers quoted the same instant).
+    return _rows("SELECT ts, price FROM price_ticks WHERE id IN (SELECT MAX(id) FROM price_ticks "
+                 "WHERE indicator_key = ? AND ts >= ? GROUP BY ts) ORDER BY ts", (indicator_key, since_iso))
 
 
 def latest_daily(indicator_key, limit=30):
@@ -388,8 +204,8 @@ def purge_ticks(retention_days=30, now=None):
         for (key, day), ticks in days.items():
             prices = [t["price"] for t in ticks]
             conn.execute(
-                "INSERT OR REPLACE INTO price_daily (indicator_key, day, open, high, low, close, n_ticks, provider) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                db.upsert_sql("price_daily", ["indicator_key", "day", "open", "high", "low", "close", "n_ticks",
+                                              "provider"], ["indicator_key", "day"]),
                 (key, day, prices[0], max(prices), min(prices), prices[-1], len(prices), ticks[-1]["provider"]))
         deleted = conn.execute("DELETE FROM price_ticks WHERE substr(ts,1,10) < ?", (cutoff,)).rowcount
     return len(days), deleted
@@ -401,8 +217,8 @@ def save_eia_weekly(series_key, rows, unit):
     """rows: [(period, value), ...]. Upserts, so a revised value replaces the old one."""
     now = utcnow()
     with connect() as conn:
-        conn.executemany("INSERT OR REPLACE INTO eia_weekly (series_key, period, value, unit, fetched_at) "
-                         "VALUES (?,?,?,?,?)", [(series_key, p, v, unit, now) for p, v in rows])
+        conn.executemany(db.upsert_sql("eia_weekly", ["series_key", "period", "value", "unit", "fetched_at"],
+                                       ["series_key", "period"]), [(series_key, p, v, unit, now) for p, v in rows])
 
 
 def eia_weekly(series_key, limit=5):
@@ -422,7 +238,7 @@ def upsert_events(rows):
     """Insert new events, ignore ones already present (same date, time and title). Never deletes."""
     cols = ["date", "time", "tz", "title", "category", "source_url", "source"]
     with connect() as conn:
-        conn.executemany(f"INSERT OR IGNORE INTO events ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+        conn.executemany(db.upsert_sql("events", cols),
                          [tuple(r.get(c) for c in cols) for r in rows])
 
 
@@ -432,7 +248,7 @@ def replace_future_events(source, from_date, rows):
     cols = ["date", "time", "tz", "title", "category", "source_url", "source"]
     with connect() as conn:
         conn.execute("DELETE FROM events WHERE source = ? AND date >= ?", (source, from_date))
-        conn.executemany(f"INSERT OR IGNORE INTO events ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+        conn.executemany(db.upsert_sql("events", cols),
                          [tuple({**r, "source": source}.get(c) for c in cols) for r in rows])
 
 
@@ -462,7 +278,7 @@ def last_price_fetch():
 def reserve_quota(provider, day_utc, credits, cap):
     """Atomically add `credits` to today's count unless that would exceed `cap`. True if reserved."""
     with connect() as conn:
-        conn.execute("INSERT OR IGNORE INTO api_quota (provider, day_utc, calls) VALUES (?,?,0)",
+        conn.execute("INSERT INTO api_quota (provider, day_utc, calls) VALUES (?,?,0) ON CONFLICT DO NOTHING",
                      (provider, day_utc))
         cur = conn.execute("UPDATE api_quota SET calls = calls + ? WHERE provider = ? AND day_utc = ? "
                            "AND calls + ? <= ?", (credits, provider, day_utc, credits, cap))
@@ -485,8 +301,8 @@ def record_alert(cluster_key, article, status, now=None):
     """Insert the alert row for a story. False means this story already has one, so nobody may alert it again."""
     with connect() as conn:
         cur = conn.execute(
-            "INSERT OR IGNORE INTO alert_log (cluster_key, article_id, title, source, magnitude, direction, status, "
-            "created_at) VALUES (?,?,?,?,?,?,?,?)",
+            db.upsert_sql("alert_log", ["cluster_key", "article_id", "title", "source", "magnitude", "direction",
+                                        "status", "created_at"]),
             (cluster_key, article["id"], article["title"], article["source"], article["magnitude"],
              article["direction"], status, now or utcnow()))
         return cur.rowcount == 1
@@ -514,7 +330,7 @@ def email_sent(day, kind):
 
 def record_email_sent(day, kind, recipients):
     with connect() as conn:
-        conn.execute("INSERT OR REPLACE INTO email_log (day, kind, recipients, sent_at) VALUES (?,?,?,?)",
+        conn.execute(db.upsert_sql("email_log", ["day", "kind", "recipients", "sent_at"], ["day", "kind"]),
                      (day, kind, recipients, utcnow()))
 
 
@@ -568,8 +384,9 @@ def latest_job_runs(limit=30):
 def save_sentiment(date, sentiment, price):
     with connect() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO sentiment_history (date, label, score, n_articles, counts_json, "
-            "price_benchmark, price_value, price_change_pct, confirmation, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            db.upsert_sql("sentiment_history", ["date", "label", "score", "n_articles", "counts_json",
+                                                "price_benchmark", "price_value", "price_change_pct",
+                                                "confirmation", "updated_at"], ["date"]),
             (date, sentiment["label"], sentiment["score"], sentiment["n"], json.dumps(sentiment["counts"]),
              price.get("benchmark"), price.get("price"), price.get("change_pct"), price.get("status"), utcnow()))
 

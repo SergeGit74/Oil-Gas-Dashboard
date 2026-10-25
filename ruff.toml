@@ -1,0 +1,10 @@
+# Lint rules: pycodestyle errors/warnings and pyflakes. Kept modest on purpose; see the README ("Development").
+line-length = 130
+target-version = "py311"
+extend-exclude = ["venv", "oil_gas_archive", "outbox", "reports"]
+
+[lint]
+select = ["E", "F", "W"]
+
+[lint.per-file-ignores]
+"tests/*" = ["E501"]   # long literals and fixture rows read better on one line

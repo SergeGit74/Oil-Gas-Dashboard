@@ -16,6 +16,9 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 DATA_DIR = Path(os.getenv("DATA_DIR") or BASE_DIR)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = str(DATA_DIR / "dashboard_store.db")
+# Optional PostgreSQL (postgresql://user:password@host:5432/dbname). When set it replaces the SQLite file; the
+# vector store and the other files stay under DATA_DIR. Never print this value: it contains a password.
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 ARCHIVE_DIR = str(DATA_DIR / "oil_gas_archive")
 EVAL_HISTORY_PATH = str(DATA_DIR / "eval_history.jsonl")
 
@@ -62,9 +65,15 @@ STALE_PRICE_RED_MIN = int(os.getenv("STALE_PRICE_RED_MIN") or 12 * PRICE_POLL_IN
 STALE_BRIEF_RED_AFTER_MIN = int(os.getenv("STALE_BRIEF_RED_AFTER_MIN") or 180)  # amber past catch-up time, red this much later
 
 # ---- trust and quality (Phase 3) ----
-CLUSTER_SIMILARITY_THRESHOLD = float(os.getenv("CLUSTER_SIMILARITY_THRESHOLD") or 0.45)     # tuned on real titles (2026-10-25 sample)
-CORROBORATION_MIN_SIMILARITY = float(os.getenv("CORROBORATION_MIN_SIMILARITY") or 0.40)     # tuned with 8 Serper calls on 2026-10-25: title-to-title cosine
+# Tuned on real stored titles (2026-10-25 sample): pairs at 0.40-0.45 were still the same event.
+CLUSTER_SIMILARITY_THRESHOLD = float(os.getenv("CLUSTER_SIMILARITY_THRESHOLD") or 0.45)
+# Tuned with 8 real Serper queries on 2026-10-25; title-to-title cosine similarity.
+CORROBORATION_MIN_SIMILARITY = float(os.getenv("CORROBORATION_MIN_SIMILARITY") or 0.40)
 BACKTEST_MIN_OBSERVATIONS = int(os.getenv("BACKTEST_MIN_OBSERVATIONS") or 30)
+
+# ---- dashboard password (optional; see auth.py) ----
+DASHBOARD_LOGIN_MAX_ATTEMPTS = int(os.getenv("DASHBOARD_LOGIN_MAX_ATTEMPTS") or 5)
+DASHBOARD_LOGIN_LOCKOUT_MIN = int(os.getenv("DASHBOARD_LOGIN_LOCKOUT_MIN") or 15)
 
 # ---- delivery (Phase 4) ----
 ALERT_MIN_MAGNITUDE = int(os.getenv("ALERT_MIN_MAGNITUDE") or 4)   # verified articles at or above this get a Slack alert

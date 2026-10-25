@@ -58,7 +58,8 @@ def run_evaluation():
                                         market_status=status_line, events_text=events_text,
                                         changes_text=changes if diff["available"] else "",
                                         changes_missing_text="" if diff["available"] else changes)
-    context = (f"{eia_text}\n{status_line}\nScheduled events:\n{events_text or 'none'}\n{changes}\nSentiment reading: {sentiment['label']} (score {sentiment['score']:+.2f}, "
+    context = (f"{eia_text}\n{status_line}\nScheduled events:\n{events_text or 'none'}\n{changes}\n"
+               f"Sentiment reading: {sentiment['label']} (score {sentiment['score']:+.2f}, "
                f"raw {sentiment['score']}, {sentiment['n']} articles)")
     if history:
         context += f"\nArchive headlines:\n{history}"

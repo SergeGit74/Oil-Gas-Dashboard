@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An oil and gas morning-intelligence system: a scheduler collects and tags news, a SQLite store holds the results,
-and a Streamlit dashboard reads them. `README.md` has the full design and known gaps; `USER_GUIDE.md` is the
-operator guide. The project runs on Windows with a project-local `venv/`; it has a git repo and a pytest suite
-(`tests/`), and no linter configured. `CLAUDE_CODE_TASKS.md` is the phased task brief (Phases 0-4 are done).
+An oil and gas morning-intelligence system: a scheduler collects and tags news, a SQLite store (or PostgreSQL, if
+`DATABASE_URL` is set) holds the results, and a Streamlit dashboard reads them. `README.md` has the full design and
+known gaps; `USER_GUIDE.md` is the operator guide. The project runs on Windows with a project-local `venv/`; it has a
+git repo, a pytest suite (`tests/`), ruff (`ruff.toml`) and a GitHub Actions workflow (`.github/workflows/ci.yml`).
+`CLAUDE_CODE_TASKS.md` is the phased task brief (all phases, 0-5, are done).
 
 ## Commands
 
@@ -20,7 +21,9 @@ Call the venv's programs directly (no activation needed):
 .\venv\Scripts\python.exe -m jobs.run_ingestion      # embed verified articles into Chroma
 .\venv\Scripts\python.exe -m jobs.run_evaluation     # generate and evaluate today's brief (replaces today's row)
 .\venv\Scripts\python.exe -c "import storage"        # creates/migrates dashboard_store.db
-.\venv\Scripts\python.exe -m pytest                  # offline test suite (no network, no paid calls)
+.\venv\Scripts\python.exe -m pytest                  # offline test suite (no network, no paid calls), SQLite + PostgreSQL
+.\venv\Scripts\ruff.exe check .                      # lint; CI runs this and pytest, so run both before committing
+.\venv\Scripts\python.exe scripts/copy_sqlite_to_postgres.py --dry-run   # one-off move to DATABASE_URL (read-only on SQLite)
 .\venv\Scripts\python.exe -m jobs.run_prices         # one price poll (free providers; writes to the real store)
 .\venv\Scripts\python.exe scripts/check_symbols.py   # one call per indicator and provider -> reports/symbol_check.json
 ```
@@ -38,7 +41,10 @@ build uses; regenerate it from the venv with `pip freeze` after dependency chang
 - **Offline checks:** run `python -m pytest`. `tests/conftest.py` points the store at a throwaway database
   (`config.DB_PATH` and `config.EVAL_HISTORY_PATH` must be set *before* `import storage`, which runs `init_db()`
   at import), blanks every API key, and refuses non-loopback sockets, so a test that forgets to mock HTTP fails.
-  Use the `db` fixture for a fresh database per test. Render the dashboard without a server with
+  Use the `db` fixture for a fresh database per test: it runs the test on SQLite *and* on PostgreSQL (the server in
+  `PG_TEST_URL`, else an embedded one if `pgserver` is installed, else that leg is skipped; `REQUIRE_PG=1` makes a
+  missing one fail). Do not patch `time.sleep` globally in tests: Streamlit's timers spin on it and the run hangs.
+  Render the dashboard without a server with
   `streamlit.testing.v1.AppTest.from_file(<absolute path>)` and check `at.exception`; the path must be absolute.
   `scripts/check_symbols.py` and `jobs.run_prices` make real (free-tier) provider calls; the symbol check spends
   Twelve Data credits.
@@ -49,7 +55,18 @@ build uses; regenerate it from the venv with `pip freeze` after dependency chang
 
 ## Architecture
 
-Two processes communicate only through `dashboard_store.db` (SQLite, WAL):
+Two processes communicate only through the shared store (`dashboard_store.db`, SQLite WAL, or PostgreSQL):
+
+- **Database layer rules** (`db.py`, `migrations.py`, `storage.py`): all SQL lives in `storage.py` and must run
+  unchanged on both engines: `?` placeholders only (never a `?` inside a string literal), upserts through
+  `db.upsert_sql` (`ON CONFLICT`, never `INSERT OR IGNORE/REPLACE`), no `GROUP BY` on non-aggregated columns,
+  `NULLS LAST` when ordering a nullable column, no SQLite-only functions. Schema changes are a new numbered entry
+  appended to `migrations.MIGRATIONS` (idempotent; never edit an applied one) and are written in SQLite-flavoured DDL
+  (`INTEGER PRIMARY KEY AUTOINCREMENT`, `REAL`), which `db.pg_ddl` translates. Never print `DATABASE_URL`
+  (`db.safe_url` hides the password). SQLite accepts values PostgreSQL rejects (text in an INTEGER column), so
+  keep column types honest.
+- **Dashboard password** (`auth.py`): `auth.require_login()` is the first thing after `st.set_page_config` on every
+  page, before any store read. New pages must call it. The lockout state is module-level and shared by all sessions.
 
 - **Scheduler** (`jobs/scheduler.py`): `collection_cycle` every 20 minutes (`run_collection`, `run_ingestion`,
   `check_source_health`) and `daily_brief_cycle` at 05:30 (`run_evaluation`, `check_eval_trend`, source health,

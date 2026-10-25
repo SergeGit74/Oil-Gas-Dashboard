@@ -79,7 +79,7 @@ jobs/scheduler.py (long-running process, APScheduler)
 |    then check_cost_budget (yesterday's total vs DAILY_COST_BUDGET_USD)
 |
 v
-storage.py (SQLite shared store: articles, briefs, sentiment_history, job_runs, run_costs, run_claims,
+storage.py (shared store, SQLite or optional PostgreSQL: articles, briefs, sentiment_history, job_runs, run_costs, run_claims,
 |           price_ticks, price_daily, api_quota, eia_weekly, events, feedback, alert_log, email_log)
 |
 v
@@ -151,6 +151,10 @@ whole organization is rejected with a 400 asking for an `anthropic-workspace-id`
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | unset, `587` | SMTP server. Port 465 uses SSL; any other port must offer STARTTLS |
 | `EMAIL_FROM`, `EMAIL_TO`, `EMAIL_OWNER` | unset | Sender; comma-separated recipients of the brief; owner of the "needs review" notice (default: first `EMAIL_TO`) |
 | `EMAIL_OUTBOX_DIR` | `outbox/` in the data folder | Where `--dry-run` writes `.eml` files |
+| `DATABASE_URL` | unset | PostgreSQL URL (`postgresql://user:password@host:5432/db`). Unset = the SQLite file. Never logged |
+| `DASHBOARD_PASSWORD` | unset | If set, the dashboard shows only a login form until this password is entered |
+| `DASHBOARD_LOGIN_MAX_ATTEMPTS`, `DASHBOARD_LOGIN_LOCKOUT_MIN` | `5`, `15` | Failed logins before a lockout, and the lockout length (also the window failures are counted in) |
+| `PG_TEST_URL` | unset | Tests only: a PostgreSQL server for the PostgreSQL leg of the test suite |
 | `DAILY_COST_BUDGET_USD` | `10` | Daily total above which a budget alert fires |
 | `SONNET_INPUT_USD_PER_MTOK`, `SONNET_OUTPUT_USD_PER_MTOK` | `2.00`, `10.00` | Price overrides for the default model |
 | `ANTHROPIC_PRICE_MULTIPLIER` | `1.0` | For example 1.1 if you use US-only inference pricing |
@@ -364,6 +368,10 @@ oil_gas_dashboard/
 ├── pricing.py                # unit prices for cost estimates (env-overridable)
 ├── cost_tracker.py           # per-run cost accounting: Claude, Serper, Apify, counters
 ├── tracked_llm.py            # single entry point for Claude calls (records token usage)
+├── db.py                     # SQLite / PostgreSQL connection wrapper (placeholders, upserts, DDL translation)
+├── migrations.py             # versioned schema migrations, recorded in schema_migrations
+├── auth.py                   # optional dashboard password (DASHBOARD_PASSWORD)
+├── ruff.toml, pytest.ini     # lint and test configuration; .github/workflows/ci.yml runs both
 ├── storage.py                # SQLite store and accessors
 ├── alerts.py                 # send_alert: log, console, and Slack if configured
 ├── data_sources.py           # EIA, GDELT (GKG files), Apify (async run, retry, cost), Serper (credits), normalize_url
@@ -384,6 +392,7 @@ oil_gas_dashboard/
 ├── config/market_symbols.json # the 8 indicators: label, unit, currency, calendar code, fallback window, per-provider symbol
 ├── config/events.yaml        # manual scheduled events (FOMC dates; add OPEC+ meetings by hand)
 ├── scripts/backtest_sentiment.py, export_golden_set.py, tagger_agreement.py  # CLIs for the three tools above
+├── scripts/copy_sqlite_to_postgres.py  # one-off copy of an existing SQLite database into PostgreSQL
 ├── scripts/check_symbols.py  # symbol discovery -> reports/symbol_check.json (generated, gitignored)
 ├── tests/                    # pytest suite (mocked HTTP, throwaway database, network blocked)
 ├── pytest.ini, requirements-dev.txt
@@ -420,6 +429,7 @@ oil_gas_dashboard/
 | `price_daily` | Daily open/high/low/close per indicator, rolled up from ticks before they are purged |
 | `eia_weekly` | Weekly EIA series (crude stocks, distillate stocks, Lower 48 gas storage): series, period, value, unit |
 | `events` | Scheduled events: date, time, tz, title, category, source_url, source. Unique on (date, time, title) |
+| `schema_migrations` | Applied schema versions (`version`, `name`, `applied_at`); see "Optional PostgreSQL" |
 | `alert_log` | One row per story ever considered for a Slack alert (cluster key unique): article, status `sent`, `failed`, `suppressed_rate_limit` or `not_configured` |
 | `email_log` | `(day, kind)` -> sent time and recipient count; the "already mailed" marker (`brief` or `review_notice`) |
 | `feedback` | Analyst feedback: item_type (`article_tag` or `brief_section`), item_id, rating (`up`/`down`), comment, analyst_label (corrected direction), created_at |
@@ -691,12 +701,73 @@ refresh every 60 seconds; the dashboard never calls a price provider.
 - **Preview.** `python -m jobs.send_brief_email --dry-run [--day YYYY-MM-DD]` writes an `.eml` into `outbox/`
   (gitignored). It needs no SMTP settings, works while email is disabled, and neither claims nor marks anything sent.
 
-## Tests
+## Optional PostgreSQL
+
+SQLite (one file, WAL mode) stays the default and is right for one machine. Set `DATABASE_URL` to use PostgreSQL
+instead; nothing else changes. The vector store, evaluation log and outbox stay in `DATA_DIR`.
+
+- **How it works.** All SQL lives in `storage.py`, written once in a dialect both databases accept: `?` placeholders,
+  `ON CONFLICT` upserts, portable queries (for example `NULLS LAST`, which the two engines order differently by
+  default). `db.py` converts placeholders, returns dict rows and translates the two DDL keywords that differ
+  (`AUTOINCREMENT`, `REAL`). Timestamps are stored as ISO text on both, so there are no date-type conversions. The
+  driver (`psycopg`) is imported only when `DATABASE_URL` is set. A connection is opened per call, as with SQLite.
+- **Versioned migrations.** `migrations.py` holds numbered steps (1 baseline schema, 2 columns added later, 3 an
+  index); `init_db()` applies the missing ones in order and records them in `schema_migrations`. Every step is
+  idempotent, so a database created before versioning is adopted by re-running them and nothing is dropped or
+  rewritten. To change the schema, append a step; never edit an applied one. On PostgreSQL the runner takes an
+  advisory lock so the scheduler and the dashboard can start at the same moment.
+- **Moving existing data.** Create an empty PostgreSQL database, then:
+
+  ```bash
+  python scripts/copy_sqlite_to_postgres.py --pg-url postgresql://user:password@host:5432/oilgas --dry-run
+  python scripts/copy_sqlite_to_postgres.py --pg-url postgresql://user:password@host:5432/oilgas
+  ```
+
+  The SQLite file is opened read-only and never changed; nothing is deleted anywhere. The target must be empty
+  unless you pass `--append` (rows whose key exists are skipped, never overwritten). The whole copy is one
+  transaction, so a failure leaves the target exactly as it was, and id sequences are advanced past the copied ids.
+  Then set `DATABASE_URL` in `.env` and restart the scheduler and dashboard. Stop writing to the SQLite file first:
+  the copy is a snapshot, not a sync.
+- **Not built.** Hosting, connection pooling, backups of the PostgreSQL server and `pgvector` (moving the Chroma
+  archive into PostgreSQL). They are future work.
+
+## Dashboard password
+
+Setting `DASHBOARD_PASSWORD` makes `app.py` and the Research page show only a login form until it is entered:
+nothing is read from the store or rendered before that. The comparison is constant-time (`hmac.compare_digest` on
+fixed-length digests); the logged-in flag lives in the browser session; and failed logins are limited by a lockout
+that all sessions in the server process share (default: 5 failures lock everyone out for 15 minutes), so reloading or
+opening a new tab does not reset it. Each wrong guess is also slowed by a second or more. It is off by default for
+local use.
+
+This is one shared password, not user accounts, and it does not encrypt traffic or protect Streamlit's own static
+files. **A real deployment needs platform-level authentication** (a reverse proxy or identity-aware gateway with
+TLS, or a VPN) in front of the dashboard; keep the localhost binding described above unless you have one.
+
+## Development: tests, lint and CI
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest
+python -m pytest            # unit and integration tests, SQLite and PostgreSQL
+ruff check .                # lint (pycodestyle errors and warnings, pyflakes; line length 130)
 ```
+
+- **No network, no paid calls.** `tests/conftest.py` gives every test a throwaway database, blanks all API keys and
+  SMTP settings, and makes any non-loopback socket connection raise, so a test that forgets to mock HTTP fails.
+- **Both databases.** The `db` fixture runs a test on SQLite and again on PostgreSQL. The PostgreSQL leg uses the server
+  in `PG_TEST_URL` if set; otherwise, if `pgserver` is installed (`pip install pgserver`, an embedded PostgreSQL that
+  needs no server or Docker), it starts one for the session; otherwise that leg is skipped. `REQUIRE_PG=1` turns a
+  missing PostgreSQL into a failure (CI sets it). Local PostgreSQL tests are slower: the whole suite takes about two
+  minutes.
+- **CI.** `.github/workflows/ci.yml` runs on every push and pull request: install from `requirements-dev.txt` with
+  `constraints.txt`, `ruff check .`, then `pytest` against a PostgreSQL 16 service container. It needs no secrets and
+  uses no external network.
+- **Lint.** `ruff.toml` selects `E`, `F`, `W` with a 130 character line limit (long literals in `tests/` are exempt). A
+  stricter rule set (import sorting, bugbear) would flag a lot of existing code and was not adopted.
+
+## Tests
+
+How to run them is under "Development: tests, lint and CI" above.
 
 The suite uses a throwaway database, blank API keys and blocks non-loopback network connections, so it makes no
 real or paid calls. It covers the daily-run claim (concurrent claimers, attempt cap, cooldown), the brief catch-up
@@ -741,6 +812,13 @@ notice, disabled sends nothing, STARTTLS before login, retry cooldown, header in
   tested with mocked HTTP and a fake SMTP server only. SMTP provider sign-in rules (for example app passwords or
   OAuth-only accounts at Gmail or Microsoft) are unverified and depend on your provider. Slack alerts cover only
   articles saved in the cycle, so after a long outage the hourly cap decides which stories are announced.
+- **Phase 5 limits.** The PostgreSQL leg was run against an embedded PostgreSQL 16 on Windows (all tests, plus a copy
+  of the real SQLite database and a render of the dashboard on it), not against a hosted server or a different
+  major version. The GitHub Actions workflow has not run yet: its first run may expose a pin in `constraints.txt`
+  (frozen on Windows) that has no Linux wheel. The Docker image has still not been built (the Docker daemon was not
+  running); it now also installs `psycopg`. The dashboard password is a shared-secret gate for local use, not a
+  substitute for real authentication. The SQLite and PostgreSQL schemas are kept equal by the shared migrations,
+  but SQLite's looser typing can still hide a bad value until it is copied or run on PostgreSQL.
 - **Price check uses lagging data.** EIA spot prices arrived about nine days behind the calendar in testing, so
   the Confirmed/Partial/Divergent status compares today's news sentiment with the move between the last two EIA
   observations, which may be from a different week. Treat it as indicative until a fresher price source is added.

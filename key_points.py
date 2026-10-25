@@ -58,7 +58,8 @@ def diff_text(diff, today, yesterday):
     if not diff["available"]:
         return UNAVAILABLE_TEXT
     lines = [f"Changes since yesterday ({yesterday['date']} to {today['date']}), computed by code:"]
-    for label, stories in (("New top stories", diff["new_stories"]), ("No longer among the top stories", diff["dropped_stories"])):
+    groups = (("New top stories", diff["new_stories"]), ("No longer among the top stories", diff["dropped_stories"]))
+    for label, stories in groups:
         lines.append(f"- {label}: " + ("; ".join(f"{s['title']} ({s['source']}, impact {s['magnitude']}, {s['direction']})"
                                                   for s in stories) if stories else "none"))
     s = diff["sentiment"]

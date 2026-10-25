@@ -62,4 +62,4 @@ def agreement_report():
     return {"articles_with_feedback": len(latest), "judged": judged, "agree": agree, "disagree": disagree,
             "agreement_rate": round(agree / judged, 3) if judged else None,
             "thumbs_down_without_correction": down_no_label, "article_not_found": missing,
-            "confusion": {f"{m} -> {l}": n for (m, l), n in sorted(confusion.items())}}
+            "confusion": {f"{model} -> {label}": n for (model, label), n in sorted(confusion.items())}}

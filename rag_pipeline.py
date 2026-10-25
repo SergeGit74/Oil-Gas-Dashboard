@@ -6,7 +6,6 @@ import chromadb
 import voyageai
 
 import config
-import storage
 import tracked_llm
 
 EMBED_MODEL = "voyage-3.5"

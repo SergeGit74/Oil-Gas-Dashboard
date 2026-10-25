@@ -1,2 +1,6 @@
 -r requirements.txt
 pytest>=8.0
+ruff>=0.6
+# Optional, local only: an embedded PostgreSQL so the PostgreSQL leg of the tests runs without a server or Docker.
+# Without it (and without PG_TEST_URL) that leg is skipped. CI uses a real PostgreSQL service instead.
+# pgserver>=0.1.4

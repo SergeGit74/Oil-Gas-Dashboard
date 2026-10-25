@@ -52,6 +52,11 @@ you do not need to activate it.
   correct direction); `python scripts/tagger_agreement.py` and `python scripts/export_golden_set.py` summarise it.
   The **Research** page (sidebar) compares past sentiment with Brent's next moves; it needs about 30 days of both
   and is descriptive only. From the second day on, the brief has a "What changed since yesterday" section.
+- **Password and PostgreSQL (both optional).** Set `DASHBOARD_PASSWORD` in `.env` to put a login in front of the
+  dashboard (a shared password for local use; real deployments need proper authentication in front of it). To use
+  PostgreSQL instead of the SQLite file, create an empty database, run
+  `python scripts/copy_sqlite_to_postgres.py --pg-url <url> --dry-run`, then without `--dry-run`, then set
+  `DATABASE_URL` and restart both programs. Your SQLite file is never changed or deleted.
 - **Slack alerts.** With `SLACK_WEBHOOK_URL` set, each verified story with impact 4 or 5 is posted once (at most 5 an
   hour). Nothing unverified is ever posted. With no webhook, nothing is sent.
 - **Brief email.** To receive the brief by email, set `EMAIL_ENABLED=true`, `SMTP_HOST`, `SMTP_USER`,

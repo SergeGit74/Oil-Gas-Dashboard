@@ -2,11 +2,13 @@
 import pandas as pd
 import streamlit as st
 
+import auth
 import backtest
 import config
 import storage
 
 st.set_page_config(page_title="Research | Oil & Gas Morning Intelligence", layout="wide")
+auth.require_login()
 storage.init_db()
 
 st.title("Research: sentiment versus Brent")

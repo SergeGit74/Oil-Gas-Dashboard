@@ -124,3 +124,5 @@ exchange_calendars==4.13.2
 korean_lunar_calendar==0.4.0
 pyluach==2.3.0
 toolz==1.2.0
+psycopg==3.3.6
+psycopg-binary==3.3.6

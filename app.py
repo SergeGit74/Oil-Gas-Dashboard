@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import streamlit as st
 
+import auth
 import config
 import cost_tracker
 import freshness
@@ -16,6 +17,7 @@ import storage
 import story_cluster
 
 st.set_page_config(page_title="Oil & Gas Morning Intelligence", layout="wide")
+auth.require_login()  # optional password; stops the page here until it is entered
 storage.init_db()
 
 # ---- refresh control ------------------------------------------------------

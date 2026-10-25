@@ -2,7 +2,7 @@
 and override through .env."""
 import os
 
-import config
+import config  # noqa: F401  (importing config loads .env, which the price overrides below read)
 
 # model id -> (input USD per million tokens, output USD per million tokens)
 DEFAULT_MODEL_PRICES = {

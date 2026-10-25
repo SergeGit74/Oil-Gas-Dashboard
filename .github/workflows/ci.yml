@@ -1,0 +1,45 @@
+# Lint and test on every push and pull request. No secrets and no external network are needed or used:
+# the tests mock HTTP and block non-loopback sockets; PostgreSQL is a service container on localhost.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oilgas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_TEST_URL: postgresql://postgres:postgres@localhost:5432/oilgas_test
+      REQUIRE_PG: "1"   # a missing PostgreSQL leg is a failure here, not a skip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt -c constraints.txt
+      - name: Lint
+        run: ruff check .
+      - name: Test (SQLite and PostgreSQL)
+        run: python -m pytest -q

@@ -5,7 +5,6 @@ cluster). Each new article joins the cluster of its most similar earlier article
 CLUSTER_SIMILARITY_THRESHOLD; clusters are never merged afterwards, which limits chaining of distinct stories.
 `text_similarity` is the same measure, used to check that a Serper result really reports the same story.
 """
-import math
 import re
 from datetime import datetime, timedelta
 
