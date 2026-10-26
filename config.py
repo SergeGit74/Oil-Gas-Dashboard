@@ -25,11 +25,47 @@ EVAL_HISTORY_PATH = str(DATA_DIR / "eval_history.jsonl")
 # Scheduler settings (all overridable from .env). Times are in DESK_TIMEZONE.
 DESK_TIMEZONE = os.getenv("DESK_TIMEZONE") or "Asia/Dubai"
 COLLECTION_INTERVAL_MINUTES = int(os.getenv("COLLECTION_INTERVAL_MINUTES") or 20)
-BRIEF_HOUR = int(os.getenv("BRIEF_HOUR") or 5)
-BRIEF_MINUTE = int(os.getenv("BRIEF_MINUTE") or 30)
+
+# SCHEDULER_MODE=local (default) runs every job; deployment runs only jobs.scheduler.deployment_cycle at the
+# DEPLOY_RUN_HOURS (minute 0, in SCHEDULER_TZ). The scheduler validates these strictly at startup; here a bad value
+# only falls back so that importing config (and the dashboard) never fails.
+SCHEDULER_MODE = (os.getenv("SCHEDULER_MODE") or "local").strip().lower()
+SCHEDULER_TZ = (os.getenv("SCHEDULER_TZ") or "").strip() or DESK_TIMEZONE
+DEPLOY_RUN_HOURS_RAW = (os.getenv("DEPLOY_RUN_HOURS") or "6,10,14,18,22").strip()
+
+
+def parse_run_hours(raw):
+    """Parse '6,10,14' into a sorted list of distinct hours 0-23. Raises ValueError on anything else."""
+    parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+    if not parts:
+        raise ValueError("DEPLOY_RUN_HOURS is empty")
+    hours = set()
+    for part in parts:
+        if not part.isdigit() or not 0 <= int(part) <= 23:
+            raise ValueError(f"DEPLOY_RUN_HOURS has {part!r}; each entry must be a whole hour from 0 to 23")
+        hours.add(int(part))
+    return sorted(hours)
+
+
+def longest_gap_minutes(hours):
+    """Longest wait between two consecutive runs, wrapping past midnight (one run a day = 24 h)."""
+    return max(((b - a) % 24 or 24) * 60 for a, b in zip(hours, hours[1:] + hours[:1]))
+
+
+try:
+    DEPLOY_RUN_HOURS = parse_run_hours(DEPLOY_RUN_HOURS_RAW)
+except ValueError:
+    DEPLOY_RUN_HOURS = [6, 10, 14, 18, 22]
+DEPLOYMENT = SCHEDULER_MODE == "deployment"
+# Deployment runs a few times a day, so the 20-minute freshness defaults below would be red between every run.
+_gap = longest_gap_minutes(DEPLOY_RUN_HOURS) if DEPLOYMENT else None
+
+# The brief is made by the first run of the day, so in deployment mode its default time is that run's hour.
+BRIEF_HOUR = int(os.getenv("BRIEF_HOUR") or (DEPLOY_RUN_HOURS[0] if DEPLOYMENT else 5))
+BRIEF_MINUTE = int(os.getenv("BRIEF_MINUTE") or (0 if DEPLOYMENT else 30))
 
 # A collection cycle this overdue means the scheduler is probably not running (dashboard warning, healthcheck).
-STALE_AFTER_MINUTES = max(45, 2 * COLLECTION_INTERVAL_MINUTES + 5)
+STALE_AFTER_MINUTES = _gap + 60 if DEPLOYMENT else max(45, 2 * COLLECTION_INTERVAL_MINUTES + 5)
 
 # An article is "verified" when confidence is at or above this and it is not injection-flagged.
 VERIFIED_MIN_CONFIDENCE = 0.5
@@ -58,8 +94,10 @@ PRICE_STALE_MINUTES = int(os.getenv("PRICE_STALE_MINUTES") or 30)  # an open-mar
 EIA_WEEKLY_REFRESH_HOURS = int(os.getenv("EIA_WEEKLY_REFRESH_HOURS") or 6)  # weekly series change once a week
 
 # ---- staleness thresholds in the dashboard header (minutes) ----
-STALE_COLLECTION_AMBER_MIN = int(os.getenv("STALE_COLLECTION_AMBER_MIN") or 2 * COLLECTION_INTERVAL_MINUTES)
-STALE_COLLECTION_RED_MIN = int(os.getenv("STALE_COLLECTION_RED_MIN") or 4 * COLLECTION_INTERVAL_MINUTES)
+STALE_COLLECTION_AMBER_MIN = int(os.getenv("STALE_COLLECTION_AMBER_MIN")
+                                 or (_gap + 60 if DEPLOYMENT else 2 * COLLECTION_INTERVAL_MINUTES))
+STALE_COLLECTION_RED_MIN = int(os.getenv("STALE_COLLECTION_RED_MIN")
+                               or (_gap + 180 if DEPLOYMENT else 4 * COLLECTION_INTERVAL_MINUTES))
 STALE_PRICE_AMBER_MIN = int(os.getenv("STALE_PRICE_AMBER_MIN") or 3 * PRICE_POLL_INTERVAL_MIN)
 STALE_PRICE_RED_MIN = int(os.getenv("STALE_PRICE_RED_MIN") or 12 * PRICE_POLL_INTERVAL_MIN)
 STALE_BRIEF_RED_AFTER_MIN = int(os.getenv("STALE_BRIEF_RED_AFTER_MIN") or 180)  # amber past catch-up time, red this much later

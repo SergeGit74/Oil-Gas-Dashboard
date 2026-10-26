@@ -52,7 +52,9 @@ def collection_freshness(now):
 
 def price_freshness(now):
     """Age of the last successful price fetch. Judged only while some market is open: when every market is closed
-    the poller runs hourly and an old tick is expected."""
+    the poller runs hourly and an old tick is expected. Deployment mode never polls prices, so nothing is judged."""
+    if config.DEPLOYMENT:
+        return Freshness("Last price tick", "not polled (deployment mode)", "unknown")
     age = minutes_since(storage.last_price_fetch(), now)
     indicators = market_data.load_indicators()
     any_open = any(market_calendar.market_status(cfg, now).status == "open" for cfg in indicators.values())

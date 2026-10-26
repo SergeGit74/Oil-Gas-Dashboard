@@ -75,6 +75,13 @@ Two processes communicate only through the shared store (`dashboard_store.db`, S
   cycle run immediately. `price_cycle` (every `PRICE_POLL_INTERVAL_MIN`, inside `cost_run("price_poll")`, hidden from
   `latest_marker()` and the dashboard run list) calls `jobs/run_prices.py`; a 03:10 job rolls ticks into
   `price_daily` and purges old ticks.
+- **Deployment mode** (`SCHEDULER_MODE=deployment`, `config.DEPLOYMENT`): `register_jobs` registers only
+  `deployment_cycle` (cron at `DEPLOY_RUN_HOURS`, minute 0, `SCHEDULER_TZ`; no startup run), inside
+  `cost_run("deployment_cycle")`: collection, ingestion, `brief_if_missing` (shared with `catch_up_brief`),
+  `send_brief_email`, source health. Prices, event load, retention, the 05:30 cycle and the budget check are off, so
+  `freshness.price_freshness` reports "not polled" and the stale limits in `config` derive from the longest gap
+  between runs. `storage.last_cycle_finished` counts both cycle names. Settings are validated in
+  `scheduler.validate_mode` (config itself never raises).
 - **Daily-run claims:** `storage.claim_daily_run(job, day)` (table `run_claims`) is how a once-a-day job avoids
   running twice or retrying forever (2 attempts, 30 minute cooldown). The scheduled brief and `catch_up_brief`
   (runs at startup and after each collection cycle, from 06:00 desk time, when no `briefs` row exists for today)

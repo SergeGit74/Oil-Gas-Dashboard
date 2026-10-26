@@ -446,8 +446,9 @@ def latest_marker():
 
 
 def last_cycle_finished():
-    """ISO time the latest scheduled collection cycle finished, or None."""
-    rows = _rows("SELECT finished_at FROM run_costs WHERE job_name = 'collection_cycle' ORDER BY id DESC LIMIT 1")
+    """ISO time the latest scheduled collection cycle (local or deployment mode) finished, or None."""
+    rows = _rows("SELECT finished_at FROM run_costs WHERE job_name IN ('collection_cycle', 'deployment_cycle') "
+                 "ORDER BY id DESC LIMIT 1")
     return rows[0]["finished_at"] if rows else None
 
 

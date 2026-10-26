@@ -134,6 +134,9 @@ whole organization is rejected with a 400 asking for an `anthropic-workspace-id`
 | `DESK_TIMEZONE` | `Asia/Dubai` | Timezone for the scheduler's schedule (the daily brief time) |
 | `COLLECTION_INTERVAL_MINUTES` | `20` | Minutes between collection cycles. Also scales the "scheduler stale" threshold (twice this plus 5, at least 45) |
 | `BRIEF_HOUR`, `BRIEF_MINUTE` | `5`, `30` | Daily brief time in `DESK_TIMEZONE` |
+| `SCHEDULER_MODE` | `local` | `local` runs every job. `deployment` runs only `deployment_cycle` (see "Deployment mode"). Anything else stops the scheduler at startup |
+| `SCHEDULER_TZ` | `DESK_TIMEZONE` | Timezone of `DEPLOY_RUN_HOURS`. Keep it equal to `DESK_TIMEZONE`; the scheduler warns if they differ |
+| `DEPLOY_RUN_HOURS` | `6,10,14,18,22` | Deployment mode: whole hours (0-23, minute 0) at which `deployment_cycle` runs. In deployment mode the default brief time becomes the first hour, and the staleness limits below default to the longest gap between runs plus a margin |
 | `DATA_DIR` | project folder | Where the database, vector store and evaluation log live. Docker sets it to `/data` |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Model used for all Claude calls; prices are looked up by this id |
 | `CATCHUP_AFTER_HOUR`, `CATCHUP_AFTER_MINUTE` | brief time + 30 min (`6`, `0`) | Desk time from which a missed brief is generated |
@@ -255,7 +258,10 @@ apscheduler>=3.10
 exchange_calendars>=4.5
 pyyaml>=6.0
 psycopg[binary]>=3.1
+tzdata>=2024.1
 ```
+
+`tzdata` supplies the timezone database that Windows does not have; the scheduler needs it for `Asia/Dubai`.
 
 `constraints.txt` pins the exact tested versions (the Docker image and CI install with it); `requirements-dev.txt` adds
 `pytest` and `ruff`.
@@ -294,6 +300,26 @@ claim with `storage.claim_daily_run("daily_brief", day)`: at most 2 attempts a d
 and never two at once, so a failing run cannot loop and spend money. With no verified articles there is nothing to
 brief and no attempt is spent. The dashboard never starts the pipeline; it shows "Brief pending" until a brief
 exists. The catch-up does not rerun the source-health, divergence or budget checks.
+
+**Deployment mode** (`SCHEDULER_MODE=deployment`). For a host that should run a few times a day instead of every
+20 minutes, the scheduler registers one job, `deployment_cycle`, at minute 0 of each hour in `DEPLOY_RUN_HOURS`
+(default 06, 10, 14, 18, 22 in `SCHEDULER_TZ`, default Asia/Dubai). Nothing runs at startup. Inside one
+`cost_run("deployment_cycle")` it does, in order, each step isolated like the other cycles:
+
+1. `run_collection`, then `run_ingestion`.
+2. The brief and its evaluation, only if the `briefs` table has no row for today (published or flagged), there are
+   verified articles, and `claim_daily_run("daily_brief", day)` allows it (2 attempts a day, 30 minutes apart). This
+   is the same helper (`brief_if_missing`) the local catch-up uses, so a failing run cannot loop.
+3. `send_brief_email`, which sends at most once a day (`email_log`) and does nothing unless `EMAIL_ENABLED=true`.
+4. `check_source_health`.
+
+These local-mode jobs are **disabled** in deployment mode: the price poll, price retention, the event load, the 05:30
+daily brief cycle, the startup catch-up, the sentiment-divergence check and the cost-budget check. Consequences:
+the price tiles stay on the last stored ticks (the header says "not polled"), the `events` table is not refreshed
+(re-run `python -m jobs.load_events` by hand), and no budget alert fires. The dashboard's staleness limits, the
+container health check and the brief's "due" time follow the run hours. The brief date is the UTC date, so keep the
+run hours within one UTC day (the defaults are 02:00-18:00 UTC). Settings are checked at startup; a bad
+`SCHEDULER_MODE`, hour or timezone stops the scheduler with a message.
 
 The scheduler's timezone, interval and brief time come from `DESK_TIMEZONE`, `COLLECTION_INTERVAL_MINUTES`,
 `BRIEF_HOUR` and `BRIEF_MINUTE` in `.env` (defaults: `Asia/Dubai`, 20, 05:30). The scheduler runs one
@@ -766,6 +792,9 @@ notice, disabled sends nothing, STARTTLS before login, retry cooldown, header in
 - **Working draft.** Expect further integration issues over longer runs. `requirements.txt` has lower bounds only;
   `constraints.txt` pins the exact versions tested together (Python 3.11 on Windows), and the Docker build uses
   it. The Linux image has not been built yet, so a pinned version without a Linux wheel is possible.
+- **Deployment mode is tested offline only.** The schedule, the brief-once-a-day logic and the email-once logic are
+  covered by tests with stubbed steps; `deployment_cycle` has not been run live or on a host, and the 4-hour gaps
+  between runs mean a failed run is retried only at the next scheduled hour.
 - **Model id and prices.** Check current Anthropic model names and prices; prices differ between model versions.
   The configured model rejects forced tool choice (`tool_choice` of type `tool`), so tagging and evaluation offer
   the tool and instruct the model to call it. If a batch comes back without a tool call it is skipped (tagging

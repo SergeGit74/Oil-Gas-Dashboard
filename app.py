@@ -100,6 +100,8 @@ def price_panel():
     st.subheader("Market prices")
     indicators = market_data.load_indicators()
     ticks = storage.latest_ticks()
+    if config.DEPLOYMENT:
+        st.caption("Deployment mode: prices are not polled, so these tiles show the last stored ticks.")
     if not ticks:
         st.info("No prices yet. The scheduler's price poller fills this: `python -m jobs.scheduler` "
                 "(needs TWELVE_DATA_API_KEY, ENABLE_YAHOO_FALLBACK=true or EIA_API_KEY in .env).")

@@ -1,4 +1,6 @@
-"""Long-running APScheduler process. Each cycle runs inside one cost_run."""
+"""Long-running APScheduler process. Each cycle runs inside one cost_run.
+
+SCHEDULER_MODE=local (default) runs every job. SCHEDULER_MODE=deployment runs only deployment_cycle."""
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -56,12 +58,18 @@ def catch_up_brief(now=None):
     now = now or datetime.now(ZoneInfo(TIMEZONE))
     if (now.hour, now.minute) < (config.CATCHUP_AFTER_HOUR, config.CATCHUP_AFTER_MINUTE):
         return None
+    return brief_if_missing()
+
+
+def brief_if_missing():
+    """Generate and evaluate today's brief only when no brief row exists for today (published or flagged) and
+    there are verified articles to brief; a claim_daily_run claim then limits retries. Returns the run status or None."""
     if storage.brief_for_date(_brief_day()):
         return None
     if not storage.verified_articles(storage.hours_ago(24), limit=1):
         return None
     if not _claim_brief_run():
-        log.info("Brief catch-up not claimed (attempt cap or cooldown).")
+        log.info("Brief not claimed (attempt cap or cooldown).")
         return None
     log.info("No brief for today; generating it now.")
     status = _step("run_evaluation", run_evaluation)
@@ -111,13 +119,39 @@ def events_cycle():
         _step("load_events", run_load_events)  # logs its own status; _step logs 'failed' under the same name
 
 
-def main():
-    """Start the scheduler: register the jobs, run the startup cycles once, then block."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    missing = [k for k in config.REQUIRED_KEYS if not config.get(k)]
-    if missing:  # steps that need these degrade or fail visibly; the scheduler itself keeps running
-        log.warning("Missing settings in .env, the related steps will fail or degrade: %s", ", ".join(missing))
-    scheduler = BlockingScheduler(timezone=TIMEZONE)
+def deployment_cycle():
+    """The only job in SCHEDULER_MODE=deployment: collect, ingest, brief (once a day), email it, check source health."""
+    with cost_tracker.cost_run("deployment_cycle"):
+        _step("run_collection", run_collection)
+        _step("run_ingestion", run_ingestion)
+        _step("brief_if_missing", brief_if_missing)  # no brief yet today and a claim, else a no-op
+        _step("send_brief_email", send_brief_email)  # no-op unless enabled and today's brief is unsent
+        _step("source_health", check_source_health)
+
+
+def validate_mode():
+    """Check SCHEDULER_MODE, SCHEDULER_TZ and DEPLOY_RUN_HOURS; returns (mode, timezone name, hours).
+    Raises ValueError with a readable message on a bad value."""
+    mode = config.SCHEDULER_MODE
+    if mode not in ("local", "deployment"):
+        raise ValueError(f"SCHEDULER_MODE must be 'local' or 'deployment', not {mode!r}")
+    hours = config.parse_run_hours(config.DEPLOY_RUN_HOURS_RAW)
+    try:
+        ZoneInfo(config.SCHEDULER_TZ)
+    except Exception as exc:  # ZoneInfoNotFoundError, or ValueError for a malformed key
+        raise ValueError(f"SCHEDULER_TZ {config.SCHEDULER_TZ!r} is not a known timezone (is tzdata installed?)") from exc
+    return mode, config.SCHEDULER_TZ, hours
+
+
+def register_jobs(scheduler, mode="local", tz=None, hours=None):
+    """Add the jobs for the mode. Local: the five regular jobs. Deployment: deployment_cycle only, at minute 0 of
+    each hour in `hours` in timezone `tz`. Every other job is left unregistered."""
+    if mode == "deployment":
+        hours = hours if hours is not None else config.DEPLOY_RUN_HOURS
+        scheduler.add_job(deployment_cycle, "cron", hour=",".join(str(h) for h in hours), minute=0,
+                          timezone=tz or config.SCHEDULER_TZ, id="deployment_cycle", max_instances=1,
+                          coalesce=True, misfire_grace_time=900)
+        return
     scheduler.add_job(collection_cycle, "interval", minutes=config.COLLECTION_INTERVAL_MINUTES,
                       id="collection_cycle", max_instances=1, coalesce=True)
     scheduler.add_job(price_cycle, "interval", minutes=config.PRICE_POLL_INTERVAL_MIN,
@@ -127,6 +161,29 @@ def main():
     scheduler.add_job(price_retention, "cron", hour=3, minute=10, id="price_retention",
                       max_instances=1, coalesce=True)
     scheduler.add_job(events_cycle, "cron", hour=4, minute=0, id="load_events", max_instances=1, coalesce=True)
+
+
+def main():
+    """Start the scheduler: register the jobs for the mode, run the startup cycles once (local mode), then block."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    try:
+        mode, tz, hours = validate_mode()
+    except ValueError as exc:
+        raise SystemExit(f"Scheduler not started: {exc}")
+    missing = [k for k in config.REQUIRED_KEYS if not config.get(k)]
+    if missing:  # steps that need these degrade or fail visibly; the scheduler itself keeps running
+        log.warning("Missing settings in .env, the related steps will fail or degrade: %s", ", ".join(missing))
+    scheduler = BlockingScheduler(timezone=tz if mode == "deployment" else TIMEZONE)
+    register_jobs(scheduler, mode, tz, hours)
+    if mode == "deployment":
+        if tz != config.DESK_TIMEZONE:
+            log.warning("SCHEDULER_TZ (%s) differs from DESK_TIMEZONE (%s): the dashboard header and the brief "
+                        "catch-up times use DESK_TIMEZONE. Keep them equal.", tz, config.DESK_TIMEZONE)
+        log.info("Scheduler started in deployment mode (%s). deployment_cycle runs at %s:00; nothing runs now. "
+                 "Prices, event loads, retention and budget checks are disabled.",
+                 tz, ", ".join(f"{h:02d}" for h in hours))
+        scheduler.start()
+        return
     log.info("Scheduler started (%s). Running the event load, one price poll and one collection cycle now.", TIMEZONE)
     _step("events_cycle", events_cycle)  # before the first brief catch-up so "Watch today" has its events
     _step("price_cycle", price_cycle)
