@@ -1,7 +1,7 @@
 # User Guide: Oil & Gas Morning Intelligence Dashboard
 
 A short guide to starting the system, turning features on, and reading the dashboard. For setup, design and known gaps
-see `README.md`.
+see `docs/REFERENCE.md`.
 
 ## 1. How it fits together
 
@@ -48,7 +48,7 @@ you do not need to activate it.
 
 ### Running with Docker instead
 
-If you use Docker, one command starts both programs (scheduler and dashboard); see `README.md` for setup. The Docker
+If you use Docker, one command starts both programs (scheduler and dashboard); see `docs/REFERENCE.md` for setup. The Docker
 files have not been built or run yet, so treat them as untested.
 
 ```

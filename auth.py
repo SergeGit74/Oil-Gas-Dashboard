@@ -4,7 +4,7 @@ Call require_login() at the top of every page, before anything is read or render
 for local use: constant-time comparison, a per-session login flag, and a lockout that is shared by all sessions in
 the server process (so reloading the page or opening a new tab does not reset the attempt count). It is NOT a
 substitute for platform-level authentication: a real deployment should put the dashboard behind its own login or
-VPN (see the README).
+VPN (see docs/REFERENCE.md).
 """
 import hashlib
 import hmac

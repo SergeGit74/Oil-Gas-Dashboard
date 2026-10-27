@@ -4,7 +4,7 @@ Project: `oil_gas_dashboard` (Python, Windows, local single-user). Stack: Stream
 
 ## How to work (read first)
 
-1. Read `README.md`, `config.py`, `storage.py`, `data_sources.py`, `llm_pipeline.py`, `app.py`, and everything in `jobs/` before changing anything.
+1. Read `docs/REFERENCE.md` (the full reference; `README.md` is a short overview), `config.py`, `storage.py`, `data_sources.py`, `llm_pipeline.py`, `app.py`, and everything in `jobs/` before changing anything.
 2. Work on ONE phase per session. Start by presenting a short plan (files to change or create, new tables, new env vars, assumptions) and wait for approval before editing.
 3. Keep the existing conventions:
    - Secrets only in `.env`, loaded through `config.py`. Never put keys in code, tests, logs, or the README. Add new variables to `.env.example`.
@@ -16,7 +16,7 @@ Project: `oil_gas_dashboard` (Python, Windows, local single-user). Stack: Stream
 5. Tests: use `pytest`. No real network or paid-API calls in tests. Mock HTTP, use fixtures. Run the tests and fix failures before reporting.
 6. Use `pathlib`, avoid shell-specific commands inside Python code (the machine is Windows). Scheduler timezone is `Asia/Dubai`.
 7. Do not claim something is verified unless you ran it. If an endpoint, symbol, series ID, or provider limit cannot be confirmed from the official docs or a live test, make it configurable, say so in your report, and do not guess silently.
-8. At the end of each phase: update `README.md` (new files, env vars, tables, "Known gaps"), then report in this format: what changed, how to run it, test results, what is unverified or assumed, suggested next step.
+8. At the end of each phase: update `docs/REFERENCE.md` (new files, env vars, tables, "Known gaps"), then report in this format: what changed, how to run it, test results, what is unverified or assumed, suggested next step.
 9. If a git repository exists, commit once per phase with a clear message. Do not push.
 
 ## Out of scope (do not do)

@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 An oil and gas morning-intelligence system: a scheduler collects and tags news, a SQLite store (or PostgreSQL, if
-`DATABASE_URL` is set) holds the results, and a Streamlit dashboard reads them. `README.md` has the full design and
-known gaps; `USER_GUIDE.md` is the operator guide. The project runs on Windows with a project-local `venv/`; it has a
+`DATABASE_URL` is set) holds the results, and a Streamlit dashboard reads them. `docs/REFERENCE.md` has the full design and
+known gaps (`README.md` is a short overview); `USER_GUIDE.md` is the operator guide. The project runs on Windows with a project-local `venv/`; it has a
 git repo, a pytest suite (`tests/`), ruff (`ruff.toml`) and a GitHub Actions workflow (`.github/workflows/ci.yml`).
 `CLAUDE_CODE_TASKS.md` is the phased task brief (all phases, 0-5, are done).
 

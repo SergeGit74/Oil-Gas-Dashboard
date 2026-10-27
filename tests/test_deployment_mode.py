@@ -66,8 +66,8 @@ def test_validate_mode_accepts_defaults_and_rejects_bad_settings(monkeypatch):
 
 def test_deployment_defaults_in_a_fresh_process():
     """With only SCHEDULER_MODE=deployment set, config derives the brief time and staleness limits from the run hours."""
-    env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("DEPLOY_", "SCHEDULER_", "STALE_", "BRIEF_", "CATCHUP_", "DESK_"))}
+    env = {k: ("" if k.startswith(("DEPLOY_", "SCHEDULER_", "STALE_", "BRIEF_", "CATCHUP_", "DESK_")) else v)
+           for k, v in os.environ.items()}  # blank (not removed) so the real .env cannot fill them in
     env.update(SCHEDULER_MODE="deployment", PYTHONPATH=str(ROOT), DATA_DIR=str(ROOT / "tests"))
     code = ("import config; print(config.DEPLOYMENT, config.SCHEDULER_TZ, config.BRIEF_HOUR, config.BRIEF_MINUTE, "
             "config.STALE_AFTER_MINUTES, config.STALE_COLLECTION_AMBER_MIN, config.STALE_COLLECTION_RED_MIN)")

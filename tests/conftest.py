@@ -19,6 +19,10 @@ for _name in ("ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "EIA_API_KEY", "SERPER_API_
               "TWELVE_DATA_API_KEY", "SLACK_WEBHOOK_URL", "SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD",
               "EMAIL_FROM", "EMAIL_TO", "EMAIL_OWNER", "EMAIL_ENABLED", "DATABASE_URL", "DASHBOARD_PASSWORD"):
     os.environ[_name] = ""  # set (not removed) so load_dotenv cannot fill them from the real .env
+# Scheduling settings too: a developer's .env (for example SCHEDULER_MODE=deployment) must not change test results.
+for _name in ("SCHEDULER_MODE", "SCHEDULER_TZ", "DEPLOY_RUN_HOURS", "DESK_TIMEZONE", "COLLECTION_INTERVAL_MINUTES",
+              "BRIEF_HOUR", "BRIEF_MINUTE", "CATCHUP_AFTER_HOUR", "CATCHUP_AFTER_MINUTE"):
+    os.environ[_name] = ""  # blank means "use the built-in default" for every one of these
 os.environ["ENABLE_YAHOO_FALLBACK"] = "false"
 
 import config  # noqa: E402
