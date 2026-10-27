@@ -62,7 +62,7 @@ All spend happens in the scheduler process. Details are in [`docs/REFERENCE.md`]
 |---|---|
 | **Run against live APIs** (once or a few times) | Collection, tagging, sentiment and price check, ingestion, brief generation and evaluation, "ask the desk", the dashboard. The price poller, event calendar, story clustering and the corroboration change ran live for short periods |
 | **Tested with mocks only** | Slack delivery, the brief email, deployment mode (`SCHEDULER_MODE=deployment`), the brief catch-up under real scheduling |
-| **Not yet exercised** | The cost-budget, evaluation-trend and sentiment-divergence alerts firing; the backtest (needs about 30 days of prices); a hosted PostgreSQL server; the Docker image (never built); long unattended scheduler runs |
+| **Not yet exercised** | The cost-budget, evaluation-trend and sentiment-divergence alerts firing; the backtest (needs about 30 days of prices); a hosted PostgreSQL server; the Docker scheduler and data volume (the image builds and its demo container runs in CI, but nothing else has been run); long unattended scheduler runs |
 
 ## Engineering practices
 
@@ -113,7 +113,7 @@ streamlit run app.py            # terminal 2: dashboard at http://localhost:8501
 
 macOS and Linux: use `cp` and `source venv/bin/activate`. Required keys: Anthropic, Voyage AI, EIA (free), Serper and Apify. Optional: Twelve Data, Slack webhook, SMTP. The full settings table is in [`docs/REFERENCE.md`](docs/REFERENCE.md).
 
-**Docker** (`docker compose up -d --build`) is provided but has **never been built or run**, so treat it as untested. A GitHub Actions workflow (`.github/workflows/docker.yml`) lints the Dockerfile, validates the compose file, builds the image and smoke-tests it with no keys; it had not run when this was written. A key-free, read-only demo of the frozen snapshot is `docker compose up --build dashboard-demo` (http://localhost:8502); it is untested until that workflow passes.
+**Docker** (`docker compose up -d --build`): the image is **built and smoke-tested in CI** (`.github/workflows/docker.yml`, run 40573072134 on commit 3f45d51, 2026-10-27): it lints the Dockerfile, validates the compose file, builds the image on Linux and, with no API keys, checks its contents, starts the demo container and renders the dashboard in it. The `init` and `scheduler` containers and the data volume have **not** been run yet, and it has not been run on a developer machine, so treat the full stack as untested. A key-free, read-only demo of the frozen snapshot is `docker compose up --build dashboard-demo` (http://localhost:8502).
 
 Two cautions: run only one scheduler per data folder (two double every cycle's cost), and keep the dashboard on `127.0.0.1` unless you put real authentication in front of it, because "ask the desk" spends API credit.
 

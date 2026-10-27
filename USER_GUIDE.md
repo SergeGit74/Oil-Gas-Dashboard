@@ -49,8 +49,9 @@ you do not need to activate it.
 ### Running with Docker instead
 
 If you use Docker, one command starts both programs (scheduler and dashboard); see `docs/REFERENCE.md` for setup. The Docker
-files have not been built or run yet, so treat them as untested. A GitHub Actions job ("Docker") builds and
-smoke-tests the image on every push; no passing run has been confirmed yet.
+image is built and smoke-tested in GitHub Actions (the "Docker" workflow passed on 2026-10-27: build, contents, demo
+dashboard health and render). The `scheduler` and `init` containers and the data volume have not been run yet, so
+treat the full stack as untested.
 
 ```
 docker compose up -d --build          start both (first run builds the image)

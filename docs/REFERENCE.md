@@ -15,7 +15,7 @@ and evaluation, "ask the desk" and the dashboard have each been run against the 
 The price poller, event calendar, story clustering and corroboration fix have run live for short periods. Not yet
 exercised: Slack delivery and the brief email against real services (only mocks so far), the cost-budget,
 evaluation-trend and sentiment-divergence alerts firing, the backtest (it needs about 30 days of prices), a hosted
-PostgreSQL, the Docker image, and long unattended scheduler runs. Treat the "Known gaps" section as a checklist before relying on any output for
+PostgreSQL, the Docker scheduler and data volume, and long unattended scheduler runs. Treat the "Known gaps" section as a checklist before relying on any output for
 trading decisions or cost reporting.
 
 **Disclaimer:** this is not financial, investment or trading advice. Briefs, tags, sentiment and price checks are
@@ -225,12 +225,14 @@ How it is set up:
 - **`.env` is optional in the compose file** (`env_file` has `required: false`). Without one the pipeline services
   start with no keys and the scheduler logs which are missing; with one, nothing changes. This is what lets the
   demo service start on a machine that has no `.env`.
-- **Build status.** The compose file and image have not been built or run in the development environment (the Docker
-  daemon was not running). `.github/workflows/docker.yml` exists to do that in CI on every push and pull request:
-  hadolint on the Dockerfile, `docker compose config -q` (with a copy of `.env.example` as `.env`, and the demo
-  profile with no `.env`), a build with `push: false`, then smoke tests with no keys (the Python imports, the image
-  contents, the demo dashboard's health endpoint, a render inside the image). Until a passing run is confirmed,
-  treat the image as untested.
+- **Build status.** The image is **built and smoke-tested in CI**: `.github/workflows/docker.yml` passed on every
+  job (run 40573072134 on commit 3f45d51, 2026-10-27). It runs hadolint on the Dockerfile, `docker compose config -q` (with a copy of `.env.example` as
+  `.env`, and the demo profile with no `.env`), builds the image on Linux with `push: false`, then smoke-tests it with
+  no keys: the Python imports, the image contents (no `.env`, no database other than the demo snapshot, non-root, the
+  snapshot present), the demo dashboard's health endpoint, and a render inside the image that leaves the snapshot
+  unchanged. **Not exercised:** the `init` and `scheduler` containers, the data volume, running the image on a
+  developer machine, a cold-cache build time and the image size. The local development machine still has no running
+  Docker daemon.
 - **`.dockerignore`.** Patterns are relative to the build context root, so databases are excluded with `**/*.db`
   (a bare `*.db` would match only top-level files), and `!demo/demo_store.db` as the last rule lets the demo snapshot
   into the image. `.github/`, `docs/` and the other development files are excluded too.
@@ -864,7 +866,7 @@ notice, disabled sends nothing, STARTTLS before login, retry cooldown, header in
 
 - **Working draft.** Expect further integration issues over longer runs. `requirements.txt` has lower bounds only;
   `constraints.txt` pins the exact versions tested together (Python 3.11 on Windows), and the Docker build uses
-  it. The Linux image has not been built yet, so a pinned version without a Linux wheel is possible.
+  it. The Linux image builds in CI with these pins.
 - **Deployment mode is tested offline only.** The schedule, the brief-once-a-day logic and the email-once logic are
   covered by tests with stubbed steps; `deployment_cycle` has not been run live or on a host, and the 4-hour gaps
   between runs mean a failed run is retried only at the next scheduled hour.
@@ -898,8 +900,8 @@ notice, disabled sends nothing, STARTTLS before login, retry cooldown, header in
 - **Phase 5 limits.** The PostgreSQL leg was run against an embedded PostgreSQL 16 on Windows (all tests, plus a copy
   of the real SQLite database and a render of the dashboard on it), not against a hosted server or a different
   major version. The test workflow (`ci.yml`) has since passed on Linux with `constraints.txt`, and a separate wheel check
-  found a Linux wheel for every pin. The Docker image has still not been built (the Docker daemon was not running;
-  `docker.yml` is meant to do it); it now also installs `psycopg`. The dashboard password is a shared-secret gate for local use, not a
+  found a Linux wheel for every pin. The Docker image now builds in CI (`docker.yml`) and installs `psycopg`; only its
+  demo container has been run. The dashboard password is a shared-secret gate for local use, not a
   substitute for real authentication. The SQLite and PostgreSQL schemas are kept equal by the shared migrations,
   but SQLite's looser typing can still hide a bad value until it is copied or run on PostgreSQL.
 - **Price check uses lagging data.** EIA spot prices arrived about nine days behind the calendar in testing, so
