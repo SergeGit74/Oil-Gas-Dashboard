@@ -31,7 +31,11 @@ Call the venv's programs directly (no activation needed):
 Docker (`Dockerfile`, `docker-compose.yml`, `healthcheck.py`) is an alternative way to run the same code:
 `docker compose up -d --build` starts `init` (creates tables), `scheduler` and `dashboard`, sharing one named
 volume mounted at `/data`. It has **never been built or run here** (the Docker CLI exists on this machine but the Docker Desktop daemon was not running), so
-treat the Docker files as untested. Keep the non-Docker workflow working: `config.py` defaults (`DATA_DIR` = project
+treat the Docker files as untested. `.github/workflows/docker.yml` lints, validates, builds and smoke-tests the image in CI (no
+secrets, `push: false`); do not describe the image as built and verified until a passing run is reported. `env_file` is
+`required: false`, and `docker compose up --build dashboard-demo` starts the keyless `DEMO_MODE` service alone (never
+document a bare `--profile demo up`: profile-less services always start). `.dockerignore` patterns are root-relative, so
+use `**/` for any depth, and `!demo/demo_store.db` must stay the last database rule. Keep the non-Docker workflow working: `config.py` defaults (`DATA_DIR` = project
 folder, `DESK_TIMEZONE=Asia/Dubai`, 20-minute interval, brief 05:30) must stay equal to the original behavior, and
 all three data paths derive from `config.DATA_DIR`. `constraints.txt` holds the exact tested versions the image
 build uses; regenerate it from the venv with `pip freeze` after dependency changes.

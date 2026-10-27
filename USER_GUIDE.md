@@ -49,7 +49,8 @@ you do not need to activate it.
 ### Running with Docker instead
 
 If you use Docker, one command starts both programs (scheduler and dashboard); see `docs/REFERENCE.md` for setup. The Docker
-files have not been built or run yet, so treat them as untested.
+files have not been built or run yet, so treat them as untested. A GitHub Actions job ("Docker") builds and
+smoke-tests the image on every push; no passing run has been confirmed yet.
 
 ```
 docker compose up -d --build          start both (first run builds the image)
@@ -58,6 +59,15 @@ docker compose ps                     status and health
 docker compose down                   stop both; your data is kept
 docker compose up -d --build          after changing code, rebuild and restart
 ```
+
+To try the read-only demo with no keys and no `.env` (a frozen snapshot, nothing live, no scheduler):
+
+```
+docker compose up --build dashboard-demo      then open http://localhost:8502
+```
+
+Always name the service. A bare `docker compose --profile demo up` would also start `init`, `scheduler` and
+`dashboard`, because services without a profile are always started.
 
 The dashboard is at **http://localhost:8501**, reachable from this PC only. Do not also run the Python scheduler
 from section 2 against the same project, and do not use `docker compose down -v` unless you want to delete all

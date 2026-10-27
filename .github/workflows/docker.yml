@@ -1,0 +1,106 @@
+# Docker checks on every push and pull request: lint the Dockerfile, validate the compose file, build the image and
+# smoke-test it with no API keys. Needs no secrets, spends nothing, and never publishes the image (push: false).
+# This is how the image gets built without a local Docker daemon.
+name: Docker
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hadolint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint the Dockerfile
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the compose file with a .env (a copy of .env.example)
+        run: |
+          cp .env.example .env
+          docker compose config -q
+          rm .env
+      - name: Validate the demo profile with no .env at all
+        run: |
+          test ! -e .env
+          docker compose --profile demo config -q
+
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v4.4.1
+      - name: Build the image (not pushed)
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: oil-gas-dashboard:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image contents - no secrets or local databases, snapshot present, non-root
+        run: |
+          docker run --rm --entrypoint sh oil-gas-dashboard:ci -c '
+            set -eu
+            test "$(id -u)" != "0" || { echo "image runs as root"; exit 1; }
+            test ! -e /app/.env || { echo ".env is inside the image"; exit 1; }
+            test -f /app/demo/demo_store.db || { echo "demo snapshot is missing from the image"; exit 1; }
+            for leftover in /app/.git /app/venv /app/oil_gas_archive /app/eval_history.jsonl /app/reports /app/outbox; do
+              test ! -e "$leftover" || { echo "unexpected $leftover in the image"; exit 1; }
+            done
+            extra="$(find /app /data \( -name "*.db" -o -name "*.db-wal" -o -name "*.db-shm" \) ! -path /app/demo/demo_store.db)"
+            test -z "$extra" || { echo "unexpected database files in the image:"; echo "$extra"; exit 1; }
+            echo "image contents ok"
+          '
+
+      - name: Python imports work with no API keys
+        run: docker run --rm oil-gas-dashboard:ci python -c "import config, storage, jobs.scheduler; print('imports ok')"
+
+      - name: Start the demo dashboard and wait for its health endpoint
+        run: |
+          docker run -d --name dash-demo -e DEMO_MODE=true -p 127.0.0.1:8502:8501 oil-gas-dashboard:ci
+          for i in $(seq 1 60); do
+            if docker exec dash-demo python healthcheck.py dashboard; then ok=1; break; fi
+            sleep 2
+          done
+          test "${ok:-0}" = 1 || { echo "dashboard health endpoint never answered"; exit 1; }
+          curl -fsS http://127.0.0.1:8502/_stcore/health
+
+      - name: Render the dashboard in the container and check the snapshot is untouched
+        run: |
+          before="$(docker exec dash-demo sha256sum /app/demo/demo_store.db)"
+          docker exec -i dash-demo python - <<'PY'
+          from streamlit.testing.v1 import AppTest
+
+          at = AppTest.from_file("/app/app.py", default_timeout=90).run()
+          assert not at.exception, [str(e.value) for e in at.exception]
+          assert any("Demo snapshot captured" in i.value for i in at.info), "demo banner missing"
+          print("rendered with", len(at.metric), "metrics")
+          PY
+          after="$(docker exec dash-demo sha256sum /app/demo/demo_store.db)"
+          test "$before" = "$after" || { echo "the snapshot changed"; exit 1; }
+          test "$(docker exec dash-demo ls /app/demo | sort | tr '\n' ' ')" = "demo_store.db snapshot_meta.json " \
+            || { echo "unexpected files next to the snapshot"; exit 1; }
+
+      - name: Container log (on failure)
+        if: failure()
+        run: docker logs dash-demo || true
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f dash-demo || true

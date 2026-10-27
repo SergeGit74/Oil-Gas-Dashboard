@@ -7,11 +7,22 @@
 #   scheduler  collects news every few minutes and writes the daily brief
 #   dashboard  reads the shared store
 # Use a named volume, not a bind mount to a Windows folder: SQLite's WAL mode is unreliable on bind mounts.
+#
+# Demo (no keys, no .env, no scheduler, nothing live): a read-only dashboard on the snapshot inside the image.
+#   docker compose up --build dashboard-demo
+#   open http://localhost:8502
+# Naming the service starts it alone (Compose enables its "demo" profile automatically); a plain `docker compose up`
+# is unchanged. Do NOT run `docker compose --profile demo up` without the service name: services that have no profile
+# are always started, so that would also start init, scheduler and dashboard.
 
 x-app: &app
   build: .
   image: oil-gas-dashboard:local
-  env_file: .env
+  # Optional so that `--profile demo` works on a machine with no .env; without one the pipeline services start with
+  # no keys (the scheduler logs which are missing).
+  env_file:
+    - path: .env
+      required: false
   init: true
   restart: unless-stopped
   volumes:
@@ -46,6 +57,27 @@ services:
     ports:
       # Bound to this PC only: the dashboard has no login. Change to "8501:8501" only on a trusted network.
       - "127.0.0.1:8501:8501"
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py", "dashboard"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Read-only demo of the frozen snapshot baked into the image (demo/demo_store.db). Deliberately not built from the
+  # x-app block: no .env, no data volume, no init, and it never starts the scheduler.
+  dashboard-demo:
+    profiles: ["demo"]
+    build: .
+    image: oil-gas-dashboard:local
+    init: true
+    restart: unless-stopped
+    environment:
+      DEMO_MODE: "true"
+    command: ["streamlit", "run", "app.py"]
+    ports:
+      # Bound to this PC only, on a different host port from the normal dashboard.
+      - "127.0.0.1:8502:8501"
     healthcheck:
       test: ["CMD", "python", "healthcheck.py", "dashboard"]
       interval: 1m

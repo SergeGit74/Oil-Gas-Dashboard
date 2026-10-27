@@ -222,8 +222,36 @@ How it is set up:
 - **Every start runs one collection cycle**, which costs a few cents of API use, so avoid restart loops.
 - **Healthchecks:** the dashboard must answer on its health endpoint; the scheduler must have finished a
   collection cycle within the staleness window (45 minutes by default). `docker compose ps` shows the result.
-- The compose file and image have not been built or run in the development environment (Docker was not available
-  there). The first build on a new machine is the real test; please report problems.
+- **`.env` is optional in the compose file** (`env_file` has `required: false`). Without one the pipeline services
+  start with no keys and the scheduler logs which are missing; with one, nothing changes. This is what lets the
+  demo service start on a machine that has no `.env`.
+- **Build status.** The compose file and image have not been built or run in the development environment (the Docker
+  daemon was not running). `.github/workflows/docker.yml` exists to do that in CI on every push and pull request:
+  hadolint on the Dockerfile, `docker compose config -q` (with a copy of `.env.example` as `.env`, and the demo
+  profile with no `.env`), a build with `push: false`, then smoke tests with no keys (the Python imports, the image
+  contents, the demo dashboard's health endpoint, a render inside the image). Until a passing run is confirmed,
+  treat the image as untested.
+- **`.dockerignore`.** Patterns are relative to the build context root, so databases are excluded with `**/*.db`
+  (a bare `*.db` would match only top-level files), and `!demo/demo_store.db` as the last rule lets the demo snapshot
+  into the image. `.github/`, `docs/` and the other development files are excluded too.
+- **Static checks done without a daemon.** `docker compose config` passes with and without a `.env`; all 125 wheels
+  needed by `requirements.txt` under `constraints.txt` exist for CPython 3.11.5+ on manylinux (checked with
+  `pip download --only-binary=:all: --platform manylinux...`). Two limits: `soupsieve 3.0.3` requires Python 3.11.5 or
+  newer, so the base image must be a recent 3.11.x (the floating `python:3.11-slim` tag is); and that check
+  evaluated environment markers on Windows, so Linux-only transitive dependencies that `constraints.txt` does not
+  list are installed unpinned and unchecked until the build runs.
+
+#### Docker demo (no keys)
+
+```bash
+docker compose up --build dashboard-demo      # then open http://localhost:8502
+```
+
+`dashboard-demo` (profile `demo`) runs the image with `DEMO_MODE=true`: the frozen snapshot baked into the image,
+read-only, with no `.env`, no data volume, no `init`, no scheduler and no keys. It is published to `127.0.0.1:8502`.
+**Name the service.** Naming a profiled service starts it alone (Compose enables its profile automatically), but a
+bare `docker compose --profile demo up` also starts every service that has no profile (`init`, `scheduler`,
+`dashboard`), so do not use it. A plain `docker compose up` is unchanged and does not start the demo.
 
 Do not run the Docker scheduler and a Python-installed scheduler against the same data at the same time: each
 would run every cycle and double the cost. They use different storage (the volume versus the project folder), so
@@ -366,7 +394,7 @@ oil_gas_dashboard/
 ├── constraints.txt           # exact tested versions, used by the Docker build
 ├── Dockerfile                # one image for the dashboard and the scheduler
 ├── docker-compose.yml        # init, scheduler and dashboard services plus the data volume
-├── .dockerignore             # keeps .env and local data out of the image
+├── .dockerignore             # keeps .env, local databases and dev files out of the image (not the demo snapshot)
 ├── healthcheck.py            # container healthchecks (dashboard, scheduler)
 ├── README.md                 # short reviewer overview
 ├── docs/REFERENCE.md         # this file: full design, settings and known gaps
@@ -384,6 +412,7 @@ oil_gas_dashboard/
 ├── demo/                     # demo_store.db + snapshot_meta.json: the reviewed, sanitized snapshot (the only .db in git)
 ├── demo_app/                 # Streamlit Community Cloud entrypoint (streamlit_app.py), pages stub, slim requirements.txt
 ├── ruff.toml, pytest.ini     # lint and test configuration; .github/workflows/ci.yml runs both
+├── .github/workflows/docker.yml  # lint the Dockerfile, validate compose, build the image and smoke-test it (no secrets)
 ├── storage.py                # SQLite store and accessors
 ├── alerts.py                 # send_alert: log, console, and Slack if configured
 ├── data_sources.py           # EIA, GDELT (GKG files), Apify (async run, retry, cost), Serper (credits), normalize_url
@@ -868,9 +897,9 @@ notice, disabled sends nothing, STARTTLS before login, retry cooldown, header in
   articles saved in the cycle, so after a long outage the hourly cap decides which stories are announced.
 - **Phase 5 limits.** The PostgreSQL leg was run against an embedded PostgreSQL 16 on Windows (all tests, plus a copy
   of the real SQLite database and a render of the dashboard on it), not against a hosted server or a different
-  major version. The GitHub Actions workflow has not run yet: its first run may expose a pin in `constraints.txt`
-  (frozen on Windows) that has no Linux wheel. The Docker image has still not been built (the Docker daemon was not
-  running); it now also installs `psycopg`. The dashboard password is a shared-secret gate for local use, not a
+  major version. The test workflow (`ci.yml`) has since passed on Linux with `constraints.txt`, and a separate wheel check
+  found a Linux wheel for every pin. The Docker image has still not been built (the Docker daemon was not running;
+  `docker.yml` is meant to do it); it now also installs `psycopg`. The dashboard password is a shared-secret gate for local use, not a
   substitute for real authentication. The SQLite and PostgreSQL schemas are kept equal by the shared migrations,
   but SQLite's looser typing can still hide a bad value until it is copied or run on PostgreSQL.
 - **Price check uses lagging data.** EIA spot prices arrived about nine days behind the calendar in testing, so

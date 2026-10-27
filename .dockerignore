@@ -1,9 +1,11 @@
 # Secrets and local data must never be baked into an image.
+# Patterns are relative to the build context root, so a bare *.db would match only top-level files: use **/ for any depth.
 .env
-*.db
-*.db-wal
-*.db-shm
-dashboard_store.backup.db
+**/*.db
+**/*.db-wal
+**/*.db-shm
+# The one database that belongs in the image: the reviewed demo snapshot (DEMO_MODE). The last matching line wins.
+!demo/demo_store.db
 oil_gas_archive/
 eval_history.jsonl
 
@@ -14,10 +16,12 @@ __pycache__/
 
 # Not needed at runtime
 .git/
+.github/
 .claude/
 CLAUDE.md
 USER_GUIDE.md
 README.md
+docs/
 Dockerfile
 docker-compose.yml
 .dockerignore
@@ -27,4 +31,5 @@ tests/
 pytest.ini
 requirements-dev.txt
 CLAUDE_CODE_TASKS.md
+CLAUDE_CODE_PROMPT_DEMO_DOCKER.md
 outbox/

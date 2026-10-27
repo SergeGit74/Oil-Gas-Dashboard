@@ -113,7 +113,7 @@ streamlit run app.py            # terminal 2: dashboard at http://localhost:8501
 
 macOS and Linux: use `cp` and `source venv/bin/activate`. Required keys: Anthropic, Voyage AI, EIA (free), Serper and Apify. Optional: Twelve Data, Slack webhook, SMTP. The full settings table is in [`docs/REFERENCE.md`](docs/REFERENCE.md).
 
-**Docker** (`docker compose up -d --build`) is provided but has **never been built or run**, so treat it as untested.
+**Docker** (`docker compose up -d --build`) is provided but has **never been built or run**, so treat it as untested. A GitHub Actions workflow (`.github/workflows/docker.yml`) lints the Dockerfile, validates the compose file, builds the image and smoke-tests it with no keys; it had not run when this was written. A key-free, read-only demo of the frozen snapshot is `docker compose up --build dashboard-demo` (http://localhost:8502); it is untested until that workflow passes.
 
 Two cautions: run only one scheduler per data folder (two double every cycle's cost), and keep the dashboard on `127.0.0.1` unless you put real authentication in front of it, because "ask the desk" spends API credit.
 
