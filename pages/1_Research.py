@@ -5,10 +5,12 @@ import streamlit as st
 import auth
 import backtest
 import config
+import demo_mode
 import storage
 
 st.set_page_config(page_title="Research | Oil & Gas Morning Intelligence", layout="wide")
 auth.require_login()
+demo_mode.start_page()  # DEMO_MODE only: stops if the snapshot is unusable, else shows the banner
 storage.init_db()
 
 st.title("Research: sentiment versus Brent")
@@ -16,7 +18,7 @@ st.warning("Descriptive, not predictive. This shows how past daily news sentimen
            "followed, on a small and noisy sample with LLM-generated tags. It does not test any trading rule and is "
            "not investment advice.")
 
-report = backtest.run_backtest()
+report = backtest.run_backtest(today=demo_mode.today())
 st.caption(f"{report['sentiment_days']} sentiment days and {report['price_days']} {report['benchmark']} daily closes "
            f"stored. Only completed days are used; each return starts at that day's close, so no earlier price is used. "
            f"Closes from different providers are never mixed. Fewer than {config.BACKTEST_MIN_OBSERVATIONS} paired "

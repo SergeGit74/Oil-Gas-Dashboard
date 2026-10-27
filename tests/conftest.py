@@ -23,6 +23,7 @@ for _name in ("ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "EIA_API_KEY", "SERPER_API_
 for _name in ("SCHEDULER_MODE", "SCHEDULER_TZ", "DEPLOY_RUN_HOURS", "DESK_TIMEZONE", "COLLECTION_INTERVAL_MINUTES",
               "BRIEF_HOUR", "BRIEF_MINUTE", "CATCHUP_AFTER_HOUR", "CATCHUP_AFTER_MINUTE"):
     os.environ[_name] = ""  # blank means "use the built-in default" for every one of these
+os.environ["DEMO_MODE"] = ""  # tests turn demo mode on explicitly; a developer's environment must not
 os.environ["ENABLE_YAHOO_FALLBACK"] = "false"
 
 import config  # noqa: E402

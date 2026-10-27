@@ -1,10 +1,11 @@
 """Data-freshness indicators for the dashboard header, computed from job_runs, price_ticks and briefs.
 Pure reads: nothing here calls an external service or writes to the store."""
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import config
+import demo_mode
 import market_calendar
 import market_data
 import storage
@@ -86,6 +87,13 @@ def brief_freshness(now):
 
 
 def header(now=None):
-    """The three freshness indicators shown under the dashboard title."""
-    now = now or datetime.now(timezone.utc)
-    return [collection_freshness(now), price_freshness(now), brief_freshness(now)]
+    """The three freshness indicators shown under the dashboard title.
+
+    In demo mode they are judged at the snapshot's capture time (demo_mode.now()) and never amber or red: the data
+    is frozen on purpose, so the level is neutral."""
+    now = now or demo_mode.now()
+    items = [collection_freshness(now), price_freshness(now), brief_freshness(now)]
+    if config.DEMO_MODE:
+        for item in items:
+            item.level = "unknown"
+    return items

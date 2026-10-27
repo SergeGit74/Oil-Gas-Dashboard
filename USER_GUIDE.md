@@ -63,6 +63,30 @@ The dashboard is at **http://localhost:8501**, reachable from this PC only. Do n
 from section 2 against the same project, and do not use `docker compose down -v` unless you want to delete all
 stored data. Settings such as the timezone and brief time go in `.env` (see `.env.example`).
 
+### Demo mode (no keys, nothing live)
+
+The dashboard can run from a small frozen snapshot of the data, with no API keys, no scheduler and no network:
+
+```
+pip install -r demo_app/requirements.txt
+$env:DEMO_MODE = "true"; .\venv\Scripts\streamlit.exe run app.py
+```
+
+(`streamlit run demo_app/streamlit_app.py` is the same thing without the variable; Streamlit Community Cloud uses it.)
+A banner on every page says the data is frozen; "today", staleness and market open/closed are judged at the moment the
+snapshot was captured; feedback and "ask the desk" are disabled; the scheduler and every job refuse to run.
+
+To refresh the snapshot from your own data (read-only on your store, no API calls):
+
+```
+.\venv\Scripts\python.exe scripts/make_demo_snapshot.py --force      # --days 7 by default
+```
+
+It prints counts per table and the result of a safety scan for keys, e-mail addresses and file paths, and it refuses
+to write the file if the scan finds any. Review the summary and the file before you commit `demo/demo_store.db`
+and `demo/snapshot_meta.json`; the script never runs `git add`. After a schema change the dashboard tells you to
+regenerate the snapshot.
+
 ## 3. Turning features on (`.env`)
 
 Edit `.env` in the project folder (never commit it or paste it anywhere), then restart the scheduler and dashboard.

@@ -93,6 +93,21 @@ Two processes communicate only through the shared store (`dashboard_store.db`, S
   `check_source_health(notify=False)`. Price tiles read `price_ticks` in a 60 s fragment. A sidebar fragment (`st.fragment(run_every=...)`) drives the refresh modes; "With scheduler" polls
   `storage.latest_marker()` and reruns only when a run finished.
 
+- **Demo mode** (`DEMO_MODE=true`, `config.DEMO_MODE`, helpers in `demo_mode.py`): the dashboard serves the committed,
+  sanitized snapshot `demo/demo_store.db` (+ `snapshot_meta.json`) strictly read-only. Rules: `db.connect()` opens
+  the file `mode=ro&immutable=1` (no WAL pragma, no `-wal`/`-shm`), `storage.init_db()` does nothing, and
+  `DATABASE_URL` is ignored completely; every `jobs.*` entry point, the scheduler and `check_symbols` refuse through
+  `demo_mode.block_in_demo`/`refuse` (new job code must do the same); the dashboard must judge "today", staleness,
+  market status and the next 7 days of events from `demo_mode.now()` (the snapshot's `captured_at`), never
+  `datetime.now()`; feedback and "ask the desk" are disabled; pipeline-only packages (`anthropic`, `voyageai`,
+  `chromadb`, `psycopg`) must stay lazy imports on the dashboard's import path (a clean-venv render proves it). Every
+  page calls `demo_mode.start_page()` right after `auth.require_login()`. `scripts/make_demo_snapshot.py` builds the
+  snapshot from the live store (SELECT only), drops body text and the excluded tables, sanitizes logs and refuses to
+  write if its secret/e-mail/path scan matches. Never commit any database except `demo/demo_store.db`
+  (`.gitignore` and a test enforce it), and never `git add` a snapshot you have not reviewed. Streamlit Community
+  Cloud entrypoint: `demo_app/streamlit_app.py` with the slim `demo_app/requirements.txt`; keep it in step with
+  what the dashboard imports.
+
 ### Collection pipeline (`jobs/run_collection.py`)
 
 Fetch (Apify + GDELT) -> normalize URLs and dedupe -> drop URLs already in `articles` -> source tier, commentary

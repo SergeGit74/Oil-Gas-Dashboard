@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config  # noqa: E402
+import demo_mode  # noqa: E402
 import market_data  # noqa: E402
 
 REPORT_PATH = Path(__file__).resolve().parent.parent / "reports" / "symbol_check.json"
@@ -74,6 +75,7 @@ def check(names=None, indicators=None, providers=None, now=None):
 
 def main():
     """Parse arguments, run the symbol check, save the report and print a table."""
+    demo_mode.refuse("scripts/check_symbols.py")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--providers", help="comma-separated, default: PRICE_PROVIDERS")
     args = parser.parse_args()

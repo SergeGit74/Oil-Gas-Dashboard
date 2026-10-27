@@ -3,9 +3,11 @@ from datetime import datetime, timedelta, timezone
 
 import alerts
 import config
+import demo_mode
 import storage
 
 
+@demo_mode.block_in_demo("jobs.check_cost_budget.check_cost_budget")
 def check_cost_budget():
     """Alert if yesterday's (UTC) total cost exceeded the daily budget; returns whether it did."""
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()

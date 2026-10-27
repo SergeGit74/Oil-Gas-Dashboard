@@ -202,3 +202,7 @@ eval_history.jsonl
 reports/
 .pytest_cache/
 outbox/
+
+# Databases stay out of git, except the reviewed demo snapshot (see scripts/make_demo_snapshot.py)
+*.db
+!demo/demo_store.db

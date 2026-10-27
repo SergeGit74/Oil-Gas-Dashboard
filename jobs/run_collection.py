@@ -5,6 +5,7 @@ import logging
 import config
 import cost_tracker
 import data_sources
+import demo_mode
 import high_impact_alerts
 import llm_pipeline
 import price_confirmation
@@ -70,6 +71,7 @@ def corroborate(articles_with_tags):
     return result
 
 
+@demo_mode.block_in_demo("jobs.run_collection.run_collection")
 def run_collection():
     """One collection cycle. Returns a summary dict."""
     fetched = _dedupe(data_sources.fetch_apify_commodity_news() + data_sources.fetch_gdelt())

@@ -5,11 +5,13 @@ from statistics import mean
 
 import alerts
 import config
+import demo_mode
 
 MIN_GROUNDEDNESS = 0.85
 DRIFT_DROP = 0.10
 
 
+@demo_mode.block_in_demo("jobs.check_eval_trend.check_eval_trend")
 def check_eval_trend():
     """Alert if recent brief groundedness is low or has dropped sharply; returns whether it alerted."""
     if not os.path.exists(config.EVAL_HISTORY_PATH):

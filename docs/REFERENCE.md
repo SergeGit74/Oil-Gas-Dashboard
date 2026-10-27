@@ -160,6 +160,7 @@ whole organization is rejected with a 400 asking for an `anthropic-workspace-id`
 | `EMAIL_FROM`, `EMAIL_TO`, `EMAIL_OWNER` | unset | Sender; comma-separated recipients of the brief; owner of the "needs review" notice (default: first `EMAIL_TO`) |
 | `EMAIL_OUTBOX_DIR` | `outbox/` in the data folder | Where `--dry-run` writes `.eml` files |
 | `DATABASE_URL` | unset | PostgreSQL URL (`postgresql://user:password@host:5432/db`). Unset = the SQLite file. Never logged |
+| `DEMO_MODE` | `false` | `true`, `1` or `yes`: serve the frozen snapshot `demo/demo_store.db` read-only (see "Demo mode"). Ignores `DATABASE_URL` |
 | `DASHBOARD_PASSWORD` | unset | If set, the dashboard shows only a login form until this password is entered |
 | `DASHBOARD_LOGIN_MAX_ATTEMPTS`, `DASHBOARD_LOGIN_LOCKOUT_MIN` | `5`, `15` | Failed logins before a lockout, and the lockout length (also the window failures are counted in) |
 | `PG_TEST_URL` | unset | Tests only: a PostgreSQL server for the PostgreSQL leg of the test suite |
@@ -379,6 +380,9 @@ oil_gas_dashboard/
 ├── db.py                     # SQLite / PostgreSQL connection wrapper (placeholders, upserts, DDL translation)
 ├── migrations.py             # versioned schema migrations, recorded in schema_migrations
 ├── auth.py                   # optional dashboard password (DASHBOARD_PASSWORD)
+├── demo_mode.py              # DEMO_MODE helpers: frozen clock, snapshot check, banner, job guard
+├── demo/                     # demo_store.db + snapshot_meta.json: the reviewed, sanitized snapshot (the only .db in git)
+├── demo_app/                 # Streamlit Community Cloud entrypoint (streamlit_app.py), pages stub, slim requirements.txt
 ├── ruff.toml, pytest.ini     # lint and test configuration; .github/workflows/ci.yml runs both
 ├── storage.py                # SQLite store and accessors
 ├── alerts.py                 # send_alert: log, console, and Slack if configured
@@ -401,6 +405,7 @@ oil_gas_dashboard/
 ├── config/events.yaml        # manual scheduled events (FOMC dates; add OPEC+ meetings by hand)
 ├── scripts/backtest_sentiment.py, export_golden_set.py, tagger_agreement.py  # CLIs for the three tools above
 ├── scripts/copy_sqlite_to_postgres.py  # one-off copy of an existing SQLite database into PostgreSQL
+├── scripts/make_demo_snapshot.py  # builds demo/demo_store.db from the live store (read-only, with a safety scan)
 ├── scripts/check_symbols.py  # symbol discovery -> reports/symbol_check.json (generated, gitignored)
 ├── tests/                    # pytest suite (mocked HTTP, throwaway database, network blocked)
 ├── requirements-dev.txt
@@ -752,6 +757,43 @@ This is one shared password, not user accounts, and it does not encrypt traffic 
 files. **A real deployment needs platform-level authentication** (a reverse proxy or identity-aware gateway with
 TLS, or a VPN) in front of the dashboard; keep the localhost binding described above unless you have one.
 
+## Demo mode
+
+`DEMO_MODE=true` (also `1` or `yes`) turns the dashboard into a read-only viewer of a frozen snapshot, so a hosted demo
+can run with no keys and never spend credits.
+
+- **Store.** `demo/demo_store.db` is opened read-only and immutable (`mode=ro&immutable=1`); no `-wal` or `-shm` file
+  appears, `init_db()` and the migrations do not run, and `DATABASE_URL` is ignored completely. At the top of every page
+  the snapshot's highest `schema_migrations` version must equal `migrations.LATEST`; otherwise the page shows a message
+  to regenerate the snapshot and stops.
+- **No jobs, no spending.** `python -m jobs.scheduler`, every `jobs.run_*`, `load_events`, `send_brief_email`, the
+  check jobs, `check_source_health(notify=True)` and `scripts/check_symbols.py` exit with a message. The dashboard calls
+  no provider, Slack or SMTP; feedback and "ask the desk" are greyed out; "With scheduler" refresh is hidden and Manual
+  is the default.
+- **Frozen clock.** `demo_mode.now()` is `captured_at` from `demo/snapshot_meta.json`. Freshness, price staleness and
+  market open/closed, the 7-day events list, "today's brief", the cost panel and the Research page use it, so an old
+  snapshot is not shown as stale; the header reads "as of <captured_at>" and never turns amber or red. A banner on
+  every page says the data is frozen.
+- **Research page.** It runs on the snapshot. With fewer than 30 paired days it says "insufficient data"; nothing is
+  invented.
+- **Snapshot.** `python scripts/make_demo_snapshot.py [--days 7] [--out PATH] [--force]` reads the live store with
+  SELECT only and writes the last N days of: `articles` (title, URL, source, tier, category, direction, magnitude,
+  confidence, cluster id, injection flag, first-seen time, `content_type` and `reason` capped at 300 characters; no
+  snippets or body text), the latest published brief (plus a held brief if the live store really has one), sentiment
+  history, price ticks (last 3 days plus each indicator's newest tick), `price_daily`, the last 5 weekly EIA points per
+  series, upcoming events, and sanitized `job_runs` and `run_costs`. `feedback`, `email_log`, `alert_log`,
+  `api_quota` and `run_claims` are not copied. After writing it scans every text column for secret-like strings, e-mail
+  addresses and Windows paths; any match deletes the output and exits non-zero (as does a file over 25 MB). It does
+  not run `git add`.
+- **Dependencies.** The dashboard's import path already avoids `anthropic`, `voyageai`, `chromadb` and `psycopg`
+  (`ask the desk` imports `rag_pipeline` lazily and `db.py` imports `psycopg` only for `DATABASE_URL`). The slim list
+  is `demo_app/requirements.txt`.
+- **Streamlit Community Cloud.** It looks for the requirements file in the entrypoint's directory first, then the
+  repository root, and a file next to the entrypoint wins. The entrypoint is therefore `demo_app/streamlit_app.py`
+  (sets `DEMO_MODE`, puts the repository root on `sys.path`, runs `app.py`), with `demo_app/pages/1_Research.py` doing
+  the same for the Research page. Root-level Streamlit secrets also reach the app as environment variables, but the
+  entrypoint does not need one.
+
 ## Development: tests, lint and CI
 
 ```bash
@@ -797,6 +839,7 @@ notice, disabled sends nothing, STARTTLS before login, retry cooldown, header in
 - **Deployment mode is tested offline only.** The schedule, the brief-once-a-day logic and the email-once logic are
   covered by tests with stubbed steps; `deployment_cycle` has not been run live or on a host, and the 4-hour gaps
   between runs mean a failed run is retried only at the next scheduled hour.
+- **Demo mode is tested locally only.** The `demo_app` entrypoint and its `pages` stub are exercised with `AppTest` and a clean-venv render, not on Streamlit Community Cloud itself; whether the slim `requirements.txt` is picked up there is unverified until the first deploy.
 - **Model id and prices.** Check current Anthropic model names and prices; prices differ between model versions.
   The configured model rejects forced tool choice (`tool_choice` of type `tool`), so tagging and evaluation offer
   the tool and instruct the model to call it. If a batch comes back without a tool call it is skipped (tagging

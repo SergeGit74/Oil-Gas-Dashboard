@@ -2,7 +2,7 @@
 Claude spend is recorded) and a plain insert of analyst feedback."""
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -10,6 +10,7 @@ import streamlit as st
 import auth
 import config
 import cost_tracker
+import demo_mode
 import freshness
 import market_calendar
 import market_data
@@ -18,12 +19,14 @@ import story_cluster
 
 st.set_page_config(page_title="Oil & Gas Morning Intelligence", layout="wide")
 auth.require_login()  # optional password; stops the page here until it is entered
+demo_mode.start_page()  # DEMO_MODE only: stops if the snapshot is unusable, else shows the banner
 storage.init_db()
 
 # ---- refresh control ------------------------------------------------------
 # The dashboard only reads the store; new data comes from the scheduler process. These modes control when the
-# open page re-reads it.
-REFRESH_MODES = ["With scheduler", "Auto-refresh", "Every 20 min", "Manual"]
+# open page re-reads it. The demo has no scheduler, so "With scheduler" is hidden there and Manual is the default.
+REFRESH_MODES = ["Auto-refresh", "Every 20 min", "Manual"] if config.DEMO_MODE else \
+    ["With scheduler", "Auto-refresh", "Every 20 min", "Manual"]
 AUTO_INTERVALS = {"1 minute": 60, "5 minutes": 300, "10 minutes": 600, "30 minutes": 1800}
 SCHEDULER_POLL_SECONDS = 30  # cheap database check, reloads only if a new cycle finished
 EVERY_20_MIN_SECONDS = 1200
@@ -49,10 +52,11 @@ def _install_refresher(interval_seconds, only_if_new_data):
 
 
 st.session_state["data_marker"] = storage.latest_marker()
-now_utc = datetime.now(timezone.utc)
+now_utc = demo_mode.now()  # the snapshot's capture time in demo mode, the real time otherwise
 with st.sidebar:
     st.header("Refresh")
     mode = st.radio("Refresh mode", REFRESH_MODES, key="refresh_mode",
+                    index=REFRESH_MODES.index("Manual") if config.DEMO_MODE else 0,
                     help="With scheduler: reload when the scheduler finishes a new cycle. Auto-refresh: reload on "
                          "a timer you choose. Every 20 min: reload on the scheduler's cycle length. "
                          "Manual: reload the browser page yourself.")
@@ -65,9 +69,13 @@ with st.sidebar:
         _install_refresher(SCHEDULER_POLL_SECONDS, only_if_new_data=True)
     st.button("Refresh now")  # any interaction re-runs the page against the latest data
 
-    st.caption(f"Page loaded: {now_utc:%H:%M:%S} UTC")
+    st.caption(f"Snapshot captured: {now_utc:%d %b %Y %H:%M} UTC" if config.DEMO_MODE
+               else f"Page loaded: {now_utc:%H:%M:%S} UTC")
     finished = storage.last_cycle_finished()
-    if finished:
+    if config.DEMO_MODE:
+        if finished:
+            st.caption(f"Last collection cycle in the snapshot: {finished[11:19]} UTC")
+    elif finished:
         age_min = (now_utc - datetime.fromisoformat(finished)).total_seconds() / 60
         st.caption(f"Last collection cycle: {finished[11:19]} UTC ({age_min:.0f} min ago)")
         if age_min > STALE_AFTER_MINUTES:
@@ -81,7 +89,9 @@ st.caption("Automated collection, verification and briefing. Not investment advi
 
 # ---- data freshness -------------------------------------------------------
 # Computed from job_runs, price_ticks and briefs (see freshness.py); amber and red thresholds are in config.
-for col, item in zip(st.columns(3), freshness.header()):
+if config.DEMO_MODE:
+    st.caption(f"Data as of {now_utc:%d %b %Y %H:%M} UTC (frozen snapshot)")
+for col, item in zip(st.columns(3), freshness.header(now_utc)):
     col.markdown(f"**{item.label}**  \n{item.colored}")
 
 # ---- market prices --------------------------------------------------------
@@ -106,8 +116,8 @@ def price_panel():
         st.info("No prices yet. The scheduler's price poller fills this: `python -m jobs.scheduler` "
                 "(needs TWELVE_DATA_API_KEY, ENABLE_YAHOO_FALLBACK=true or EIA_API_KEY in .env).")
         return
-    now = datetime.now(timezone.utc)
-    since = storage.hours_ago(24)
+    now = demo_mode.now()
+    since = demo_mode.hours_ago(24)
     for row_keys in (list(indicators)[:4], list(indicators)[4:]):
         for col, key in zip(st.columns(4), row_keys):
             cfg, tick = indicators[key], ticks.get(key)
@@ -169,7 +179,7 @@ for col, (key, label, unit) in zip(weekly_cols, (("crude_stocks", "US crude stoc
         col.metric(f"{label} ({unit})", "n/a")
 
 st.subheader("Scheduled events, next 7 days")
-today_utc = datetime.now(timezone.utc).date()
+today_utc = demo_mode.today()
 upcoming = storage.events_between(today_utc.isoformat(), (today_utc + timedelta(days=7)).isoformat())
 if upcoming:
     st.dataframe(pd.DataFrame(upcoming)[["date", "time", "tz", "title", "category", "source_url"]],
@@ -225,7 +235,7 @@ else:
 
 # ---- verified feed and unverified panel -----------------------------------
 st.header("Verified feed (last 24h)")
-verified_all = storage.verified_articles(storage.hours_ago(24), limit=400)
+verified_all = storage.verified_articles(demo_mode.hours_ago(24), limit=400)
 verified = story_cluster.one_per_cluster(verified_all)[:100]  # one row per story, best-confidence article shown
 if verified:
     members = storage.cluster_members({a["cluster_id"] for a in verified if a.get("cluster_id")})
@@ -244,7 +254,7 @@ else:
     st.write("No verified articles in the last 24 hours.")
 
 with st.expander("Unverified / low-confidence (not used in the brief, sentiment or search)"):
-    unverified = storage.unverified_articles(storage.hours_ago(24))
+    unverified = storage.unverified_articles(demo_mode.hours_ago(24))
     if unverified:
         st.dataframe(pd.DataFrame(unverified)[["title", "source", "source_tier", "confidence", "reason", "url"]],
                      width="stretch", hide_index=True)
@@ -270,7 +280,7 @@ with st.expander("Recent job log"):
 
 # ---- pipeline cost --------------------------------------------------------
 st.header("Pipeline cost")
-daily = storage.daily_costs(14)
+daily = storage.daily_costs(14, now=now_utc)
 if daily:
     today = daily[-1]
     m1, m2, m3, m4 = st.columns(4)
@@ -293,15 +303,18 @@ else:
 # ---- analyst feedback -----------------------------------------------------
 # The one non-"ask the desk" write the dashboard makes: a plain, validated insert into `feedback`.
 with st.expander("Analyst feedback on tags and brief sections"):
-    kind = st.radio("What are you rating?", ["An article tag", "A brief section"], horizontal=True, key="fb_kind")
+    if config.DEMO_MODE:
+        st.caption("Disabled in the demo: the snapshot is read-only, so feedback cannot be saved.")
+    kind = st.radio("What are you rating?", ["An article tag", "A brief section"], horizontal=True, key="fb_kind",
+                    disabled=config.DEMO_MODE)
     RATINGS = {"Agree / useful": "up", "Disagree / not useful": "down"}
     if kind == "An article tag":
         options = {f"{a['title'][:90]} [{a['source']}] - {a['direction']}": a["id"] for a in verified[:50]}
         if not options:
             st.write("No verified articles to rate yet.")
-        choice = st.selectbox("Article", list(options), key="fb_article") if options else None
+        choice = st.selectbox("Article", list(options), key="fb_article", disabled=config.DEMO_MODE) if options else None
         label = st.selectbox("Correct direction (optional)", ["(no correction)"] + list(storage.FEEDBACK_LABELS),
-                             key="fb_label")
+                             key="fb_label", disabled=config.DEMO_MODE)
         item = ("article_tag", options[choice]) if choice else None
     else:
         sections = [s for s in re.split(r"\n(?=## )", brief["text"] if brief and brief["status"] == "published" else "")
@@ -309,20 +322,23 @@ with st.expander("Analyst feedback on tags and brief sections"):
         names = {s.splitlines()[0][3:].strip(): s for s in sections}
         if not names:
             st.write("No published brief sections to rate yet.")
-        choice = st.selectbox("Section", list(names), key="fb_section") if names else None
+        choice = st.selectbox("Section", list(names), key="fb_section", disabled=config.DEMO_MODE) if names else None
         label = "(no correction)"
         item = ("brief_section", f"{brief['date']}#{choice}") if choice else None
-    rating = st.radio("Rating", list(RATINGS), horizontal=True, key="fb_rating")
-    comment = st.text_area("Comment (optional)", max_chars=storage.MAX_COMMENT_CHARS, key="fb_comment")
-    if st.button("Save feedback", disabled=item is None):
+    rating = st.radio("Rating", list(RATINGS), horizontal=True, key="fb_rating", disabled=config.DEMO_MODE)
+    comment = st.text_area("Comment (optional)", max_chars=storage.MAX_COMMENT_CHARS, key="fb_comment",
+                           disabled=config.DEMO_MODE)
+    if st.button("Save feedback", disabled=item is None or config.DEMO_MODE):
         storage.add_feedback(item[0], item[1], RATINGS[rating], comment,
                              None if label == "(no correction)" else label)
         st.success("Feedback saved.")
 
 # ---- ask the desk ---------------------------------------------------------
 st.header("Ask the desk")
-question = st.text_input("Question about recent verified coverage")
-if question:
+if config.DEMO_MODE:
+    st.caption("Disabled in the demo: answering a question calls paid APIs, and the demo never does.")
+question = st.text_input("Question about recent verified coverage", disabled=config.DEMO_MODE)
+if question and not config.DEMO_MODE:
     import rag_pipeline  # imported lazily: loads the vector store and embedding client
 
     try:

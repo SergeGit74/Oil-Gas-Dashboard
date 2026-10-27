@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import config
 import cost_tracker
+import demo_mode
 import market_data
 import storage
 
@@ -16,6 +17,7 @@ def _chunks(items, size):
         yield items[i:i + size]
 
 
+@demo_mode.block_in_demo("jobs.run_prices.run_prices")
 def run_prices(now=None, providers=None, quota=None, indicators=None):
     """One poll. Returns a summary dict. `providers`, `quota` and `indicators` can be injected (tests)."""
     now = now or datetime.now(timezone.utc)
@@ -63,6 +65,7 @@ def run_prices(now=None, providers=None, quota=None, indicators=None):
     return {"due": len(due), "stored": len(quotes), "missing": remaining}
 
 
+@demo_mode.block_in_demo("jobs.run_prices.purge_old_ticks")
 def purge_old_ticks():
     """Roll old ticks into daily closes, purge them, and log the result."""
     days, deleted = storage.purge_ticks(config.PRICE_TICK_RETENTION_DAYS)

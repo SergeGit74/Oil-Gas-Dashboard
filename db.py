@@ -7,6 +7,7 @@ differ (AUTOINCREMENT, REAL). The PostgreSQL driver (psycopg) is imported only w
 import re
 import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import config
@@ -84,8 +85,15 @@ class Conn:
 
 @contextmanager
 def connect():
-    """Open a connection to the configured backend; commit on success, roll back on error, always close."""
-    if config.DATABASE_URL:
+    """Open a connection to the configured backend; commit on success, roll back on error, always close.
+
+    In demo mode this is the snapshot file opened read-only and immutable, with no pragma that writes, so no -wal or
+    -shm file is ever created and any write raises."""
+    if config.DEMO_MODE:
+        raw = sqlite3.connect(Path(config.DB_PATH).resolve().as_uri() + "?mode=ro&immutable=1", uri=True, timeout=30)
+        raw.row_factory = sqlite3.Row
+        kind = "sqlite"
+    elif config.DATABASE_URL:
         try:
             import psycopg
             from psycopg.rows import dict_row

@@ -24,7 +24,10 @@ def hours_ago(hours):
 
 
 def init_db():
-    """Bring the schema up to date. A no-op (one small read) when every migration is already applied."""
+    """Bring the schema up to date. A no-op (one small read) when every migration is already applied.
+    In demo mode it does nothing at all: the snapshot is read-only (see demo_mode.check_snapshot)."""
+    if config.DEMO_MODE:
+        return
     with connect() as conn:
         if {v for v, _, _ in migrations.MIGRATIONS} <= migrations.applied_versions(conn):
             return
@@ -458,9 +461,9 @@ def recent_run_costs(limit=20):
     return _rows("SELECT * FROM run_costs WHERE job_name != 'price_poll' ORDER BY id DESC LIMIT ?", (limit,))
 
 
-def daily_costs(days=14):
-    """Per-UTC-day totals by service."""
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+def daily_costs(days=14, now=None):
+    """Per-UTC-day totals by service for the `days` before `now` (default: the real current time)."""
+    since = ((now or datetime.now(timezone.utc)) - timedelta(days=days)).date().isoformat()
     return _rows(
         "SELECT substr(started_at,1,10) AS day, SUM(claude_usd) AS claude_usd, SUM(apify_usd) AS apify_usd, "
         "SUM(serper_usd) AS serper_usd, SUM(total_usd) AS total_usd FROM run_costs "

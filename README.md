@@ -88,7 +88,14 @@ There is **no hard spending cap**: `DAILY_COST_BUDGET_USD` only alerts after a d
 
 ## Try it
 
-**Without any keys:** watch the walkthrough video, or open the live demo [TODO: link]. A read-only demo mode that serves a frozen snapshot is planned [TODO: update when built], so the hosted demo spends no credits.
+**Without any keys:** watch the walkthrough video, or open the live demo [TODO: link]. Demo mode serves a frozen, sanitized snapshot of the data (`demo/demo_store.db`) read-only, so it needs no keys, makes no API calls, runs no scheduler and spends no credits. To run it locally:
+
+```powershell
+pip install -r demo_app/requirements.txt     # the small dependency set; the full list is requirements.txt
+$env:DEMO_MODE = "true"; streamlit run app.py
+```
+
+(`streamlit run demo_app/streamlit_app.py` does the same without setting the variable; that is the entry point for Streamlit Community Cloud.)
 
 **Run it yourself (you need your own keys and pay for your own usage):**
 

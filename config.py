@@ -15,10 +15,18 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 # sets DATA_DIR=/data (a volume) so data survives container rebuilds.
 DATA_DIR = Path(os.getenv("DATA_DIR") or BASE_DIR)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = str(DATA_DIR / "dashboard_store.db")
+
+# DEMO_MODE=true serves a frozen, sanitized snapshot (demo/demo_store.db) read-only: no keys, no scheduler, no
+# network, no writes. DATABASE_URL is ignored completely in this mode so the demo can never read another database.
+DEMO_MODE = (os.getenv("DEMO_MODE") or "").strip().lower() in ("1", "true", "yes")
+DEMO_DIR = BASE_DIR / "demo"
+DEMO_DB_PATH = DEMO_DIR / "demo_store.db"
+DEMO_META_PATH = DEMO_DIR / "snapshot_meta.json"
+
+DB_PATH = str(DEMO_DB_PATH if DEMO_MODE else DATA_DIR / "dashboard_store.db")
 # Optional PostgreSQL (postgresql://user:password@host:5432/dbname). When set it replaces the SQLite file; the
 # vector store and the other files stay under DATA_DIR. Never print this value: it contains a password.
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+DATABASE_URL = "" if DEMO_MODE else (os.getenv("DATABASE_URL") or "").strip()
 ARCHIVE_DIR = str(DATA_DIR / "oil_gas_archive")
 EVAL_HISTORY_PATH = str(DATA_DIR / "eval_history.jsonl")
 
