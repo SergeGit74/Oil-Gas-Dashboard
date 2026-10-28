@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import brief_evaluation
 import cost_tracker
 import data_sources
+import demo_mode
 import event_calendar
 import key_points
 import llm_pipeline
@@ -33,6 +34,7 @@ def eia_context_text(eia):
     return "\n".join(lines) or "EIA data unavailable."
 
 
+@demo_mode.block_in_demo("jobs.run_evaluation.run_evaluation")
 def run_evaluation():
     """Generate today's brief from verified articles, evaluate it, save it as published or flagged, and return the status (None
     if there was nothing to brief)."""

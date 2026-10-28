@@ -9,6 +9,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 
 import config
 import cost_tracker
+import demo_mode
 import sentiment_analysis
 import storage
 from jobs.check_cost_budget import check_cost_budget
@@ -163,6 +164,7 @@ def register_jobs(scheduler, mode="local", tz=None, hours=None):
     scheduler.add_job(events_cycle, "cron", hour=4, minute=0, id="load_events", max_instances=1, coalesce=True)
 
 
+@demo_mode.block_in_demo("jobs.scheduler.main")
 def main():
     """Start the scheduler: register the jobs for the mode, run the startup cycles once (local mode), then block."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")

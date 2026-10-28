@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 An oil and gas morning-intelligence system: a scheduler collects and tags news, a SQLite store (or PostgreSQL, if
-`DATABASE_URL` is set) holds the results, and a Streamlit dashboard reads them. `README.md` has the full design and
-known gaps; `USER_GUIDE.md` is the operator guide. The project runs on Windows with a project-local `venv/`; it has a
+`DATABASE_URL` is set) holds the results, and a Streamlit dashboard reads them. `docs/REFERENCE.md` has the full design and
+known gaps (`README.md` is a short overview); `USER_GUIDE.md` is the operator guide. The project runs on Windows with a project-local `venv/`; it has a
 git repo, a pytest suite (`tests/`), ruff (`ruff.toml`) and a GitHub Actions workflow (`.github/workflows/ci.yml`).
 `CLAUDE_CODE_TASKS.md` is the phased task brief (all phases, 0-5, are done).
 
@@ -30,8 +30,11 @@ Call the venv's programs directly (no activation needed):
 
 Docker (`Dockerfile`, `docker-compose.yml`, `healthcheck.py`) is an alternative way to run the same code:
 `docker compose up -d --build` starts `init` (creates tables), `scheduler` and `dashboard`, sharing one named
-volume mounted at `/data`. It has **never been built or run here** (the Docker CLI exists on this machine but the Docker Desktop daemon was not running), so
-treat the Docker files as untested. Keep the non-Docker workflow working: `config.py` defaults (`DATA_DIR` = project
+volume mounted at `/data`. It has **never been built or run on this machine** (the Docker CLI exists but the Docker Desktop daemon was not running). `.github/workflows/docker.yml` lints, validates, builds and smoke-tests the image in CI (no
+secrets, `push: false`) and passed (run 40573072134 on commit 3f45d51, 2026-10-27): image contents, imports, and the `DEMO_MODE` container's health and render. The `init`/`scheduler` containers and the data volume have not been run, so keep calling the full stack untested. `env_file` is
+`required: false`, and `docker compose up --build dashboard-demo` starts the keyless `DEMO_MODE` service alone (never
+document a bare `--profile demo up`: profile-less services always start). `.dockerignore` patterns are root-relative, so
+use `**/` for any depth, and `!demo/demo_store.db` must stay the last database rule. Keep the non-Docker workflow working: `config.py` defaults (`DATA_DIR` = project
 folder, `DESK_TIMEZONE=Asia/Dubai`, 20-minute interval, brief 05:30) must stay equal to the original behavior, and
 all three data paths derive from `config.DATA_DIR`. `constraints.txt` holds the exact tested versions the image
 build uses; regenerate it from the venv with `pip freeze` after dependency changes.
@@ -92,6 +95,21 @@ Two processes communicate only through the shared store (`dashboard_store.db`, S
   `cost_run`. It must never start the pipeline, call a market-data provider, or send alerts: use
   `check_source_health(notify=False)`. Price tiles read `price_ticks` in a 60 s fragment. A sidebar fragment (`st.fragment(run_every=...)`) drives the refresh modes; "With scheduler" polls
   `storage.latest_marker()` and reruns only when a run finished.
+
+- **Demo mode** (`DEMO_MODE=true`, `config.DEMO_MODE`, helpers in `demo_mode.py`): the dashboard serves the committed,
+  sanitized snapshot `demo/demo_store.db` (+ `snapshot_meta.json`) strictly read-only. Rules: `db.connect()` opens
+  the file `mode=ro&immutable=1` (no WAL pragma, no `-wal`/`-shm`), `storage.init_db()` does nothing, and
+  `DATABASE_URL` is ignored completely; every `jobs.*` entry point, the scheduler and `check_symbols` refuse through
+  `demo_mode.block_in_demo`/`refuse` (new job code must do the same); the dashboard must judge "today", staleness,
+  market status and the next 7 days of events from `demo_mode.now()` (the snapshot's `captured_at`), never
+  `datetime.now()`; feedback and "ask the desk" are disabled; pipeline-only packages (`anthropic`, `voyageai`,
+  `chromadb`, `psycopg`) must stay lazy imports on the dashboard's import path (a clean-venv render proves it). Every
+  page calls `demo_mode.start_page()` right after `auth.require_login()`. `scripts/make_demo_snapshot.py` builds the
+  snapshot from the live store (SELECT only), drops body text and the excluded tables, sanitizes logs and refuses to
+  write if its secret/e-mail/path scan matches. Never commit any database except `demo/demo_store.db`
+  (`.gitignore` and a test enforce it), and never `git add` a snapshot you have not reviewed. Streamlit Community
+  Cloud entrypoint: `demo_app/streamlit_app.py` with the slim `demo_app/requirements.txt`; keep it in step with
+  what the dashboard imports.
 
 ### Collection pipeline (`jobs/run_collection.py`)
 

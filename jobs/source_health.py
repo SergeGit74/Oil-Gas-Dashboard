@@ -1,6 +1,7 @@
 """Generic consecutive-degradation monitor. To monitor a new source, log its status to job_runs at the
 call site and add one entry to SOURCE_HEALTH_CONFIG."""
 import alerts
+import demo_mode
 import storage
 
 SOURCE_HEALTH_CONFIG = {
@@ -34,7 +35,11 @@ def check_source_health(notify=True):
     outage) and return the sources alerted.
 
     notify=False (dashboard): read-only. Sends nothing and writes nothing to job_runs, so a page load can never
-    cause an alert; returns every source whose streak is at or past its threshold."""
+    cause an alert; returns every source whose streak is at or past its threshold.
+
+    notify=True refuses to run in demo mode (it would send alerts)."""
+    if notify:
+        demo_mode.refuse("jobs.source_health.check_source_health(notify=True)")
     flagged = []
     for job_name, cfg in SOURCE_HEALTH_CONFIG.items():
         streak = current_streak(job_name)

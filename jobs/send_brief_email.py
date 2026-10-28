@@ -11,11 +11,13 @@ import logging
 import brief_email
 import config
 import cost_tracker
+import demo_mode
 import storage
 
 log = logging.getLogger("send_brief_email")
 
 
+@demo_mode.block_in_demo("jobs.send_brief_email.send_brief_email")
 def send_brief_email(day=None, dry_run=False):
     """Returns a short outcome string: no_brief, disabled, already_sent, not_claimed, sent, failed, dry_run."""
     day = day or storage.utcnow()[:10]

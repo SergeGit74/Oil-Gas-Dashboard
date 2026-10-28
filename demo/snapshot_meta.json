@@ -1,0 +1,22 @@
+{
+  "captured_at": "2026-10-27T18:06:18+00:00",
+  "window_days": 7,
+  "window_start": "2026-10-20T18:06:18+00:00",
+  "row_counts": {
+    "articles": 256,
+    "briefs": 1,
+    "sentiment_history": 4,
+    "price_ticks": 116,
+    "price_daily": 0,
+    "eia_weekly": 15,
+    "events": 38,
+    "job_runs": 115,
+    "run_costs": 53,
+    "schema_migrations": 3
+  },
+  "schema_version": 3,
+  "script_version": 1,
+  "source_backend": "sqlite",
+  "size_bytes": 311296,
+  "scan": "clean"
+}

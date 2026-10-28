@@ -1,0 +1,8 @@
+# Slim dependencies for the read-only demo (Streamlit Community Cloud reads this file first because it sits next to
+# demo_app/streamlit_app.py). The full pipeline list stays in the repository root requirements.txt.
+streamlit>=1.38
+pandas>=2.2
+exchange_calendars>=4.5
+pyyaml>=6.0
+tzdata>=2024.1
+python-dotenv>=1.0

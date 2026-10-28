@@ -3,6 +3,7 @@ saves one run_costs row, even if the block raises."""
 import contextvars
 from contextlib import contextmanager
 
+import demo_mode
 import pricing
 import storage
 
@@ -43,6 +44,7 @@ def cost_run(job_name):
     if outer is not None:
         yield outer
         return
+    demo_mode.refuse(job_name)  # demo mode never records runs (the snapshot is read-only), so no job starts
     run = RunCost(job_name)
     token = _current.set(run)
     status = "success"

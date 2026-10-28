@@ -2,10 +2,12 @@
 import logging
 
 import cost_tracker
+import demo_mode
 import rag_pipeline
 import storage
 
 
+@demo_mode.block_in_demo("jobs.run_ingestion.run_ingestion")
 def run_ingestion():
     """Embed verified articles not yet indexed into the vector store; returns how many."""
     articles = storage.unindexed_verified()
