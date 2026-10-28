@@ -98,7 +98,7 @@ app.py (Streamlit, separate process, read-only against the store)
 
 | Tool | Version | Purpose |
 |---|---|---|
-| Python | 3.10+ | Runtime |
+| Python | 3.11.5+ | Runtime. Tested on 3.11; `constraints.txt` pins a package (`soupsieve 3.0.3`) that needs 3.11.5 or newer, and other versions are untested |
 | pip | recent | Package management |
 | Git | any | Version control |
 | Claude Code | latest | Recommended for building and extending the project |
@@ -268,7 +268,7 @@ cd Oil-Gas-Dashboard
 python -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt   # the pins CI and the Docker image use
 
 cp .env.example .env              # then fill in your keys
 

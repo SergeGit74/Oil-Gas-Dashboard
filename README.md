@@ -104,14 +104,14 @@ git clone https://github.com/SergeGit74/Oil-Gas-Dashboard.git
 cd Oil-Gas-Dashboard
 python -m venv venv
 venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt   # constraints.txt pins the versions that were tested together
 copy .env.example .env          # fill in your keys; values are unquoted
 python -c "import storage"      # creates and migrates the database
 python -m jobs.scheduler        # terminal 1: collection, prices, brief
 streamlit run app.py            # terminal 2: dashboard at http://localhost:8501
 ```
 
-macOS and Linux: use `cp` and `source venv/bin/activate`. Required keys: Anthropic, Voyage AI, EIA (free), Serper and Apify. Optional: Twelve Data, Slack webhook, SMTP. The full settings table is in [`docs/REFERENCE.md`](docs/REFERENCE.md).
+Python 3.11.5 or newer is needed (tested on 3.11; other versions are untested). Keep `-c constraints.txt`: it is what CI and the Docker image install with, and without it pip picks the newest version of every package, a combination nobody has tested. macOS and Linux: use `cp` and `source venv/bin/activate`. Required keys: Anthropic, Voyage AI, EIA (free), Serper and Apify. Optional: Twelve Data, Slack webhook, SMTP. The full settings table is in [`docs/REFERENCE.md`](docs/REFERENCE.md).
 
 **Docker** (`docker compose up -d --build`): the image is **built and smoke-tested in CI** (`.github/workflows/docker.yml`, run 40573072134 on commit 3f45d51, 2026-10-27): it lints the Dockerfile, validates the compose file, builds the image on Linux and, with no API keys, checks its contents, starts the demo container and renders the dashboard in it. The `init` and `scheduler` containers and the data volume have **not** been run yet, and it has not been run on a developer machine, so treat the full stack as untested. A key-free, read-only demo of the frozen snapshot is `docker compose up --build dashboard-demo` (http://localhost:8502).
 
